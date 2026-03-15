@@ -16,6 +16,12 @@ data class TelegramMessage(
     val newChatMembers: List<TelegramUser> = emptyList(),
 )
 
+data class TelegramSentMessage(
+    val chatId: Long,
+    val messageId: Long,
+    val messageThreadId: Long? = null,
+)
+
 data class TelegramChat(
     val id: Long,
     val type: String,

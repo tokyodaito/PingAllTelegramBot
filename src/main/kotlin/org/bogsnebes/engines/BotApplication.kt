@@ -7,6 +7,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import java.time.Clock
@@ -38,9 +39,16 @@ class BotApplication(
                 val repository = MemberRepository(config.databasePath)
                 try {
                     val botUser = bot.getMe().toTelegramUser()
+                    val applicationScope = CoroutineScope(currentCoroutineContext())
+                    val telegramGateway = TgBotApiGateway(bot)
                     val botService = BotService(
                         botUser = botUser,
-                        telegramGateway = TgBotApiGateway(bot),
+                        telegramGateway = telegramGateway,
+                        cooldownNoticeManager = CooldownNoticeManager(
+                            telegramGateway = telegramGateway,
+                            scope = applicationScope,
+                            clock = clock,
+                        ),
                         memberRepository = repository,
                         cooldownTracker = PingCooldownTracker(config.cooldown),
                         activeWindow = config.activeWindow,
@@ -53,7 +61,7 @@ class BotApplication(
 
                     val pollingJob = bot.startGettingOfUpdatesByLongPolling(
                         timeoutSeconds = config.pollTimeoutSeconds,
-                        scope = CoroutineScope(currentCoroutineContext()),
+                        scope = applicationScope,
                         exceptionsHandler = { throwable: Throwable ->
                             logger.log(Level.WARNING, "Polling failed, retrying in 5 seconds", throwable)
                             delay(5_000L)
@@ -64,6 +72,7 @@ class BotApplication(
                     }
 
                     pollingJob.join()
+                    applicationScope.coroutineContext.cancelChildren()
                 } finally {
                     repository.close()
                 }

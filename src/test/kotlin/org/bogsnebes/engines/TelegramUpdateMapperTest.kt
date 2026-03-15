@@ -1,6 +1,6 @@
 package org.bogsnebes.engines
 
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Instant
@@ -62,7 +62,7 @@ class TelegramUpdateMapperTest {
     }
 
     @Test
-    fun `maps chat member updates and dispatches mapped command to bot service`() = runBlocking {
+    fun `maps chat member updates and dispatches mapped command to bot service`() = runTest {
         val dbPath = Files.createTempFile("dispatch", ".db")
 
         try {
@@ -71,6 +71,11 @@ class TelegramUpdateMapperTest {
                 val service = BotService(
                     botUser = TelegramUser(id = 999L, isBot = true, firstName = "PingAll", username = "PingAllBot"),
                     telegramGateway = gateway,
+                    cooldownNoticeManager = CooldownNoticeManager(
+                        telegramGateway = gateway,
+                        scope = backgroundScope,
+                        clock = Clock.fixed(Instant.parse("2026-03-14T12:00:00Z"), ZoneOffset.UTC),
+                    ),
                     memberRepository = repository,
                     cooldownTracker = PingCooldownTracker(java.time.Duration.ofMinutes(10)),
                     activeWindow = java.time.Duration.ofDays(7),

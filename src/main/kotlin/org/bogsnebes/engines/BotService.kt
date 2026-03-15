@@ -8,6 +8,7 @@ import java.util.logging.Logger
 class BotService(
     private val botUser: TelegramUser,
     private val telegramGateway: TelegramGateway,
+    private val cooldownNoticeManager: CooldownNoticeManager,
     private val memberRepository: MemberRepository,
     private val cooldownTracker: PingCooldownTracker,
     private val activeWindow: Duration,
@@ -75,10 +76,11 @@ class BotService(
         val now = Instant.now(clock)
         val cooldownRemaining = cooldownTracker.remainingOrReserve(message.chat.id, now)
         if (cooldownRemaining != null) {
-            telegramGateway.sendMessage(
+            cooldownNoticeManager.showCooldownNotice(
                 chatId = message.chat.id,
-                text = "Команда /all сейчас на кулдауне. Попробуйте снова через ${formatDuration(cooldownRemaining)}.",
                 messageThreadId = message.messageThreadId,
+                commandMessageId = message.messageId,
+                availableAt = now.plus(cooldownRemaining),
             )
             return
         }
@@ -109,17 +111,5 @@ class BotService(
             seenAt = Instant.ofEpochSecond(update.date),
             source = "chat_member",
         )
-    }
-
-    private fun formatDuration(duration: Duration): String {
-        val totalSeconds = duration.seconds.coerceAtLeast(1)
-        val minutes = totalSeconds / 60
-        val seconds = totalSeconds % 60
-
-        return when {
-            minutes > 0 && seconds > 0 -> "${minutes}м ${seconds}с"
-            minutes > 0 -> "${minutes}м"
-            else -> "${seconds}с"
-        }
     }
 }
