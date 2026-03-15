@@ -11,9 +11,11 @@ import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.ArrayDeque
 
 private val libraryJson = Json {
     ignoreUnknownKeys = true
@@ -21,11 +23,13 @@ private val libraryJson = Json {
 
 class FakeTelegramGateway : TelegramGateway {
     val sentMessages = mutableListOf<SentMessage>()
+    val editAttempts = mutableListOf<EditedMessage>()
     val editedMessages = mutableListOf<EditedMessage>()
     val deletedMessages = mutableListOf<DeletedMessage>()
     val callbackAnswers = mutableListOf<CallbackAnswer>()
     val removedInlineKeyboards = mutableListOf<RemovedInlineKeyboard>()
     val adminUsers = mutableSetOf<Pair<Long, Long>>()
+    val editFailures = ArrayDeque<Throwable>()
     private var nextMessageId = 1L
 
     override suspend fun sendMessage(
@@ -55,7 +59,12 @@ class FakeTelegramGateway : TelegramGateway {
         text: String,
         inlineKeyboard: TelegramInlineKeyboard?,
     ) {
-        editedMessages += EditedMessage(chatId, messageId, text, inlineKeyboard)
+        val editedMessage = EditedMessage(chatId, messageId, text, inlineKeyboard)
+        editAttempts += editedMessage
+        if (editFailures.isNotEmpty()) {
+            throw editFailures.removeFirst()
+        }
+        editedMessages += editedMessage
     }
 
     override suspend fun removeInlineKeyboard(chatId: Long, messageId: Long) {
@@ -101,6 +110,10 @@ data class RemovedInlineKeyboard(
 data class CallbackAnswer(
     val callbackQueryId: String,
     val text: String,
+)
+
+fun rateLimitException(seconds: Long): TelegramRateLimitException = TelegramRateLimitException(
+    retryAfter = Duration.ofSeconds(seconds),
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)

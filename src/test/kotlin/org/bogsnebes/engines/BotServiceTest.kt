@@ -261,17 +261,28 @@ class BotServiceTest {
 
                 assertEquals(2, gateway.sentMessages.size)
                 assertTrue(gateway.sentMessages.first().inlineKeyboard != null)
-                assertTrue(gateway.sentMessages.last().text.contains("кулдауне"))
+                assertEquals(
+                    "Команда /all сейчас на кулдауне. Попробуйте снова через 10м 0с.",
+                    gateway.sentMessages.last().text,
+                )
                 assertEquals(listOf(8L), gateway.deletedMessages.map { it.messageId })
 
                 advanceTimeBy(1_000L)
                 runCurrent()
 
+                assertTrue(gateway.editedMessages.isEmpty())
+
+                advanceTimeBy(9_000L)
+                runCurrent()
+
                 assertEquals(1, gateway.editedMessages.size)
                 assertEquals(2L, gateway.editedMessages.single().messageId)
-                assertTrue(gateway.editedMessages.single().text.contains("9м 59с"))
+                assertEquals(
+                    "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 50с.",
+                    gateway.editedMessages.single().text,
+                )
 
-                advanceTimeBy(Duration.ofMinutes(10).minusSeconds(1).toMillis())
+                advanceTimeBy(Duration.ofMinutes(10).minusSeconds(10).toMillis())
                 runCurrent()
 
                 assertEquals(2L, gateway.deletedMessages.last().messageId)
@@ -322,6 +333,52 @@ class BotServiceTest {
                 assertTrue(gateway.sentMessages.last().text.contains("кулдауне"))
                 assertEquals(listOf(9L, 2L, 10L), gateway.deletedMessages.map { it.messageId })
                 assertEquals(3L, gateway.sentMessages.last().messageId)
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `keeps cooldown notice alive across telegram retry after and resumes updates`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-cooldown-rate-limit", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway().apply {
+                    editFailures += rateLimitException(35)
+                }
+                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                repository.replacePingTags(-100L, listOf("alice"))
+
+                val update = allCommandUpdate()
+
+                service.handle(update)
+                service.handle(update.copy(updateId = 2L, message = update.message?.copy(messageId = 9L)))
+
+                advanceTimeBy(10_000L)
+                runCurrent()
+
+                assertEquals(1, gateway.editAttempts.size)
+                assertTrue(gateway.editedMessages.isEmpty())
+
+                advanceTimeBy(34_000L)
+                runCurrent()
+
+                assertTrue(gateway.editedMessages.isEmpty())
+
+                advanceTimeBy(1_000L)
+                runCurrent()
+
+                assertEquals(2, gateway.editAttempts.size)
+                assertEquals(1, gateway.editedMessages.size)
+                assertEquals(2L, gateway.editedMessages.single().messageId)
+                assertEquals(
+                    "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 20с.",
+                    gateway.editedMessages.single().text,
+                )
             }
         } finally {
             dbPath.deleteIfExists()

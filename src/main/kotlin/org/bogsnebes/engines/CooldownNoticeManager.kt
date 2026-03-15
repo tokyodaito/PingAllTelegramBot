@@ -15,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
 import java.util.logging.Logger
 
+private val COUNTDOWN_UPDATE_STEP: Duration = Duration.ofSeconds(10)
+
 class CooldownNoticeManager(
     private val telegramGateway: TelegramGateway,
     private val scope: CoroutineScope,
@@ -39,9 +41,10 @@ class CooldownNoticeManager(
 
             deleteMessageIgnoringErrors(chatId, commandMessageId, "triggering command")
 
+            val initialText = buildCooldownText(displayRemaining(remainingUntil(availableAt)))
             val sentMessage = telegramGateway.sendMessage(
                 chatId = chatId,
-                text = buildCooldownText(remainingUntil(availableAt)),
+                text = initialText,
                 messageThreadId = messageThreadId,
             )
             val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -77,34 +80,38 @@ class CooldownNoticeManager(
         messageId: Long,
         availableAt: Instant,
     ) {
-        var lastText = buildCooldownText(remainingUntil(availableAt))
+        var lastDisplayedRemaining = displayRemaining(remainingUntil(availableAt))
+        var lastText = buildCooldownText(lastDisplayedRemaining)
+        var nextDelay = nextUpdateDelay(remainingUntil(availableAt))
 
         while (true) {
+            delay(nextDelay.toMillis().coerceAtLeast(1L))
+
             val remaining = remainingUntil(availableAt)
             if (!isActive(remaining)) {
                 removeAndDeleteIfCurrent(chatId, messageId)
                 return
             }
 
-            delay(remaining.toMillis().coerceAtLeast(1L).coerceAtMost(1_000L))
-
-            val nextRemaining = remainingUntil(availableAt)
-            if (!isActive(nextRemaining)) {
-                removeAndDeleteIfCurrent(chatId, messageId)
-                return
-            }
-
-            val nextText = buildCooldownText(nextRemaining)
+            val nextDisplayedRemaining = displayRemaining(
+                remaining = remaining,
+                previousDisplayed = lastDisplayedRemaining,
+            )
+            val nextText = buildCooldownText(nextDisplayedRemaining)
             if (nextText == lastText) {
+                nextDelay = nextUpdateDelay(remaining)
                 continue
             }
 
-            val updated = editIfCurrent(chatId, messageId, nextText)
-            if (!updated) {
-                return
+            when (val result = editIfCurrent(chatId, messageId, nextText)) {
+                EditResult.NotCurrent -> return
+                is EditResult.RateLimited -> nextDelay = result.retryAfter
+                EditResult.Updated -> {
+                    lastDisplayedRemaining = nextDisplayedRemaining
+                    lastText = nextText
+                    nextDelay = nextUpdateDelay(remaining)
+                }
             }
-
-            lastText = nextText
         }
     }
 
@@ -112,10 +119,10 @@ class CooldownNoticeManager(
         chatId: Long,
         messageId: Long,
         text: String,
-    ): Boolean = mutexFor(chatId).withLock {
-        val currentNotice = activeNoticesByChat[chatId] ?: return@withLock false
+    ): EditResult = mutexFor(chatId).withLock {
+        val currentNotice = activeNoticesByChat[chatId] ?: return@withLock EditResult.NotCurrent
         if (currentNotice.messageId != messageId) {
-            return@withLock false
+            return@withLock EditResult.NotCurrent
         }
 
         try {
@@ -124,9 +131,11 @@ class CooldownNoticeManager(
                 messageId = messageId,
                 text = text,
             )
-            true
+            EditResult.Updated
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (rateLimit: TelegramRateLimitException) {
+            EditResult.RateLimited(rateLimit.retryAfter)
         } catch (throwable: Throwable) {
             logger.log(
                 Level.WARNING,
@@ -134,7 +143,7 @@ class CooldownNoticeManager(
                 throwable,
             )
             activeNoticesByChat.remove(chatId)
-            false
+            EditResult.NotCurrent
         }
     }
 
@@ -194,7 +203,45 @@ class CooldownNoticeManager(
         }
     }
 
+    private fun displayRemaining(
+        remaining: Duration,
+        previousDisplayed: Duration? = null,
+    ): Duration {
+        val quantized = quantizeCountdown(remaining)
+        return when {
+            previousDisplayed == null -> quantized
+            quantized > previousDisplayed -> previousDisplayed
+            else -> quantized
+        }
+    }
+
+    private fun quantizeCountdown(duration: Duration): Duration {
+        val totalSeconds = when {
+            duration.isNegative || duration.isZero -> 0L
+            else -> (duration.toMillis() + 999L) / 1_000L
+        }
+        if (totalSeconds == 0L) {
+            return Duration.ZERO
+        }
+
+        val stepSeconds = COUNTDOWN_UPDATE_STEP.seconds
+        val quantizedSeconds = ((totalSeconds + stepSeconds - 1L) / stepSeconds) * stepSeconds
+        return Duration.ofSeconds(quantizedSeconds)
+    }
+
+    private fun nextUpdateDelay(remaining: Duration): Duration = when {
+        remaining <= Duration.ZERO -> Duration.ZERO
+        remaining < COUNTDOWN_UPDATE_STEP -> remaining
+        else -> COUNTDOWN_UPDATE_STEP
+    }
+
     private fun mutexFor(chatId: Long): Mutex = mutexesByChat.computeIfAbsent(chatId) { Mutex() }
+
+    private sealed interface EditResult {
+        data object Updated : EditResult
+        data object NotCurrent : EditResult
+        data class RateLimited(val retryAfter: Duration) : EditResult
+    }
 
     private data class ActiveCooldownNotice(
         val messageId: Long,

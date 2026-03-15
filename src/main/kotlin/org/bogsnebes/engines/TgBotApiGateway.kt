@@ -1,6 +1,7 @@
 package org.bogsnebes.engines
 
 import dev.inmo.tgbotapi.bot.RequestsExecutor
+import dev.inmo.tgbotapi.bot.exceptions.TooMuchRequestsException
 import dev.inmo.tgbotapi.extensions.api.answers.answerCallbackQuery
 import dev.inmo.tgbotapi.extensions.api.chat.members.getChatMember
 import dev.inmo.tgbotapi.extensions.api.deleteMessage
@@ -17,6 +18,7 @@ import dev.inmo.tgbotapi.types.message.HTML
 import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.types.buttons.inline.dataInlineButton
 import dev.inmo.tgbotapi.types.toChatId
+import java.time.Duration
 
 interface TelegramGateway {
     suspend fun sendMessage(
@@ -38,6 +40,14 @@ interface TelegramGateway {
     suspend fun answerCallbackQuery(callbackQueryId: String, text: String)
     suspend fun isChatAdmin(chatId: Long, userId: Long): Boolean
 }
+
+class TelegramRateLimitException(
+    val retryAfter: Duration,
+    cause: Throwable? = null,
+) : RuntimeException(
+    "Telegram rate limited request; retry after ${retryAfter.seconds} seconds",
+    cause,
+)
 
 class TgBotApiGateway(
     private val bot: RequestsExecutor,
@@ -70,14 +80,21 @@ class TgBotApiGateway(
         text: String,
         inlineKeyboard: TelegramInlineKeyboard?,
     ) {
-        bot.editMessageText(
-            chatId = chatId.toChatId(),
-            messageId = messageId.asTelegramMessageId(),
-            text = text,
-            parseMode = HTML,
-            linkPreviewOptions = LinkPreviewOptions.Disabled,
-            replyMarkup = inlineKeyboard?.toLibraryMarkup(),
-        )
+        try {
+            bot.editMessageText(
+                chatId = chatId.toChatId(),
+                messageId = messageId.asTelegramMessageId(),
+                text = text,
+                parseMode = HTML,
+                linkPreviewOptions = LinkPreviewOptions.Disabled,
+                replyMarkup = inlineKeyboard?.toLibraryMarkup(),
+            )
+        } catch (error: TooMuchRequestsException) {
+            throw TelegramRateLimitException(
+                retryAfter = Duration.ofSeconds(error.retryAfter.seconds.toLong()),
+                cause = error,
+            )
+        }
     }
 
     override suspend fun removeInlineKeyboard(chatId: Long, messageId: Long) {
