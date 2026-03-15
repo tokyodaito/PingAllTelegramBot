@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.currentCoroutineContext
 import java.time.Clock
+import java.util.logging.Level
 import java.util.logging.Logger
 
 class BotApplication(
@@ -33,7 +34,7 @@ class BotApplication(
             }
 
             try {
-                val repository = MemberRepository(config.databasePath)
+                val targetRepository = PingTargetRepository(config.databasePath)
                 val allPingSessionRepository = AllPingSessionRepository(config.databasePath)
                 try {
                     val botUser = bot.getMe().toTelegramUser()
@@ -47,10 +48,9 @@ class BotApplication(
                             scope = applicationScope,
                             clock = clock,
                         ),
-                        memberRepository = repository,
+                        pingTargetRepository = targetRepository,
                         allPingSessionRepository = allPingSessionRepository,
                         cooldownTracker = PingCooldownTracker(config.cooldown),
-                        activeWindow = config.activeWindow,
                         clock = clock,
                     )
 
@@ -58,27 +58,35 @@ class BotApplication(
                         "Starting bot @${botUser.username ?: botUser.id} with database ${config.databasePath}"
                     )
 
-                    val allowedUpdates = listOf("message", "chat_member", "callback_query")
                     val pollingRunner = TelegramLongPollingRunner(
                         updatesFetcher = TelegramGetUpdatesClient.fromHttpClient(
                             client = client,
                             botToken = config.botToken,
                             pollTimeoutSeconds = config.pollTimeoutSeconds,
-                            allowedUpdates = allowedUpdates,
+                            allowedUpdates = listOf("message", "callback_query"),
                         ),
                         logger = logger,
                     )
 
                     try {
                         pollingRunner.run { update ->
-                            TelegramUpdateMapper.map(update)?.let { botService.handle(it) }
+                            val mappedUpdate = TelegramUpdateMapper.map(update) ?: return@run
+                            runCatching {
+                                botService.handle(mappedUpdate)
+                            }.onFailure { error ->
+                                logger.log(
+                                    Level.WARNING,
+                                    "Skipped Telegram update ${mappedUpdate.updateId} after handler failure",
+                                    error,
+                                )
+                            }
                         }
                     } finally {
                         applicationScope.coroutineContext.cancelChildren()
                     }
                 } finally {
                     allPingSessionRepository.close()
-                    repository.close()
+                    targetRepository.close()
                 }
             } finally {
                 bot.close()

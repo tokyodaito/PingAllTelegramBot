@@ -2,14 +2,12 @@ package org.bogsnebes.engines
 
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.time.Duration
 
 data class BotConfig(
     val botToken: String,
     val databasePath: Path,
     val pollTimeoutSeconds: Int = 30,
-    val cooldown: Duration = Duration.ofMinutes(10),
-    val activeWindow: Duration = Duration.ofDays(7),
+    val cooldown: java.time.Duration = java.time.Duration.ofMinutes(10),
 ) {
     companion object {
         fun fromEnvironment(environment: Map<String, String> = System.getenv()): BotConfig {

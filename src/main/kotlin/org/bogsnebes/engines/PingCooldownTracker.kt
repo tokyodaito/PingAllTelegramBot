@@ -17,4 +17,9 @@ class PingCooldownTracker(private val cooldown: Duration) {
         nextAllowedAtByChat[chatId] = now.plus(cooldown)
         return null
     }
+
+    @Synchronized
+    fun clear(chatId: Long) {
+        nextAllowedAtByChat.remove(chatId)
+    }
 }

@@ -10,12 +10,8 @@ import dev.inmo.tgbotapi.types.chat.PreviewPrivateChat
 import dev.inmo.tgbotapi.types.chat.PreviewPublicChat
 import dev.inmo.tgbotapi.types.chat.PreviewSupergroupChat
 import dev.inmo.tgbotapi.types.chat.User
-import dev.inmo.tgbotapi.types.chat.member.ChatMember
-import dev.inmo.tgbotapi.types.chat.member.ChatMemberUpdated
-import dev.inmo.tgbotapi.types.message.ChatEvents.NewChatMembers
 import dev.inmo.tgbotapi.types.message.abstracts.AccessibleMessage
 import dev.inmo.tgbotapi.types.message.abstracts.ContentMessage
-import dev.inmo.tgbotapi.types.message.abstracts.GroupEventMessage
 import dev.inmo.tgbotapi.types.message.abstracts.OptionallyFromUserMessage
 import dev.inmo.tgbotapi.types.message.abstracts.PossiblyTopicMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
@@ -26,7 +22,6 @@ import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
 import dev.inmo.tgbotapi.types.queries.callback.MessageCallbackQuery
 import dev.inmo.tgbotapi.types.update.CallbackQueryUpdate
 import dev.inmo.tgbotapi.types.update.abstracts.BaseMessageUpdate
-import dev.inmo.tgbotapi.types.update.abstracts.ChatMemberUpdatedUpdate
 import dev.inmo.tgbotapi.types.update.abstracts.Update
 
 object TelegramUpdateMapper {
@@ -34,11 +29,6 @@ object TelegramUpdateMapper {
         is BaseMessageUpdate -> TelegramUpdate(
             updateId = update.updateId.long,
             message = mapMessage(update.data),
-        )
-
-        is ChatMemberUpdatedUpdate -> TelegramUpdate(
-            updateId = update.updateId.long,
-            chatMember = mapChatMemberUpdated(update.data),
         )
 
         is CallbackQueryUpdate -> (update.data as? DataCallbackQuery)
@@ -55,15 +45,6 @@ object TelegramUpdateMapper {
 
     private fun mapMessage(message: AccessibleMessage): TelegramMessage {
         val content = (message as? ContentMessage<*>)?.content
-        val newChatMembers = (message as? GroupEventMessage<*>)?.chatEvent
-            ?.let { event ->
-                if (event is NewChatMembers) {
-                    event.members.map(User::toTelegramUser)
-                } else {
-                    emptyList()
-                }
-            }
-            ?: emptyList()
 
         return TelegramMessage(
             messageId = message.messageId.long,
@@ -74,16 +55,8 @@ object TelegramUpdateMapper {
             from = (message as? OptionallyFromUserMessage)?.from?.toTelegramUser(),
             text = (content as? TextedContent)?.text,
             textSources = (content as? TextedContent)?.textSources?.map(TextSource::toTelegramTextSource).orEmpty(),
-            newChatMembers = newChatMembers,
         )
     }
-
-    private fun mapChatMemberUpdated(update: ChatMemberUpdated): TelegramChatMemberUpdated = TelegramChatMemberUpdated(
-        chat = update.chat.toTelegramChat(),
-        date = update.date.asDate.unixMillisLong / 1_000L,
-        oldChatMember = update.oldChatMemberState.toTelegramChatMember(),
-        newChatMember = update.newChatMemberState.toTelegramChatMember(),
-    )
 
     private fun mapCallbackQuery(query: DataCallbackQuery): TelegramCallbackQuery? {
         val messageQuery = query as? MessageCallbackQuery ?: return null
@@ -119,11 +92,6 @@ private fun PreviewChat.toTelegramChat(): TelegramChat = TelegramChat(
         else -> "private"
     },
     title = (this as? PreviewPublicChat)?.title,
-)
-
-private fun ChatMember.toTelegramChatMember(): TelegramChatMember = TelegramChatMember(
-    user = user.toTelegramUser(),
-    status = status.status,
 )
 
 private fun TextSource.toTelegramTextSource(): TelegramMessageTextSource = when (this) {

@@ -3,7 +3,6 @@ package org.bogsnebes.engines
 data class TelegramUpdate(
     val updateId: Long,
     val message: TelegramMessage? = null,
-    val chatMember: TelegramChatMemberUpdated? = null,
     val callbackQuery: TelegramCallbackQuery? = null,
 )
 
@@ -15,7 +14,6 @@ data class TelegramMessage(
     val from: TelegramUser? = null,
     val text: String? = null,
     val textSources: List<TelegramMessageTextSource> = emptyList(),
-    val newChatMembers: List<TelegramUser> = emptyList(),
 )
 
 data class TelegramSentMessage(
@@ -64,18 +62,6 @@ data class TelegramTextMentionTextSource(
     val user: TelegramUser,
     override val source: String,
 ) : TelegramMessageTextSource
-
-data class TelegramChatMemberUpdated(
-    val chat: TelegramChat,
-    val date: Long,
-    val oldChatMember: TelegramChatMember,
-    val newChatMember: TelegramChatMember,
-)
-
-data class TelegramChatMember(
-    val user: TelegramUser,
-    val status: String,
-)
 
 data class TelegramInlineKeyboard(
     val rows: List<List<TelegramInlineButton>>,

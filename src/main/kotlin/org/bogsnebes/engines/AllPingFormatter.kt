@@ -25,13 +25,15 @@ object AllPingFormatter {
 
         targets.forEach { target ->
             val line = buildLine(target.userId, target.username, target.displayNameSnapshot, null)
+            validateLineLength(line)
+
             val separatorLength = when {
                 currentChunkIndex == 0 && !chunkHasLines -> "\n\n".length
                 chunkHasLines -> "\n".length
                 else -> 0
             }
 
-            if (chunkHasLines && currentChunkLength + separatorLength + line.length > maxMessageLength) {
+            if (currentChunkLength + separatorLength + line.length > maxMessageLength) {
                 currentChunkIndex += 1
                 currentChunkLength = 0
                 chunkHasLines = false
@@ -59,7 +61,7 @@ object AllPingFormatter {
         val header = buildHeader(session.announcement)
         val lastChunkIndex = session.participants.maxOfOrNull(AllPingParticipant::chunkIndex) ?: 0
 
-        return (0..lastChunkIndex).map { chunkIndex ->
+        val chunks = (0..lastChunkIndex).map { chunkIndex ->
             val builder = StringBuilder()
             val participants = participantsByChunk[chunkIndex].orEmpty()
 
@@ -72,18 +74,21 @@ object AllPingFormatter {
                     chunkIndex == 0 && index == 0 -> builder.append("\n\n")
                     index > 0 -> builder.append('\n')
                 }
-                builder.append(
-                    buildLine(
-                        userId = participant.userId,
-                        username = participant.username,
-                        displayNameSnapshot = participant.displayNameSnapshot,
-                        response = participant.response,
-                    ),
+
+                val line = buildLine(
+                    userId = participant.userId,
+                    username = participant.username,
+                    displayNameSnapshot = participant.displayNameSnapshot,
+                    response = participant.response,
                 )
+                validateLineLength(line)
+                builder.append(line)
             }
 
             builder.toString()
         }
+
+        return validateChunkLengths(chunks)
     }
 
     private fun buildHeader(announcement: String?): String {
@@ -91,6 +96,7 @@ object AllPingFormatter {
             ?.trim()
             ?.takeIf(String::isNotEmpty)
             ?.let(MentionFormatter::escapeHtml)
+            ?.let { truncateToLimit(it, maxMessageLength - defaultTitle.length - 1) }
 
         return if (normalizedAnnouncement == null) {
             defaultTitle
@@ -108,4 +114,31 @@ object AllPingFormatter {
         val status = response?.statusText ?: noResponseText
         return "${MentionFormatter.renderTarget(userId, username, displayNameSnapshot)} - $status"
     }
+
+    private fun validateLineLength(line: String) {
+        if (line.length > maxMessageLength) {
+            throw AllPingFormattingException("Participant line exceeds Telegram message limit")
+        }
+    }
+
+    private fun validateChunkLengths(chunks: List<String>): List<String> {
+        chunks.forEach { chunk ->
+            if (chunk.length > maxMessageLength) {
+                throw AllPingFormattingException("All-ping chunk exceeds Telegram message limit")
+            }
+        }
+        return chunks
+    }
+
+    private fun truncateToLimit(value: String, limit: Int): String {
+        if (value.length <= limit) {
+            return value
+        }
+        if (limit <= 3) {
+            return value.take(limit)
+        }
+        return value.take(limit - 3) + "..."
+    }
 }
+
+class AllPingFormattingException(message: String) : IllegalArgumentException(message)

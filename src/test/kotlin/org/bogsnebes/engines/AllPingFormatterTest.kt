@@ -91,4 +91,43 @@ class AllPingFormatterTest {
 
         assertEquals("Сбор ответа\n\n<a href=\"tg://user?id=77\">Sim</a> - без ответа", messages.single())
     }
+
+    @Test
+    fun `long announcement stays within telegram limit and may take first chunk alone`() {
+        val longAnnouncement = "A".repeat(4_096)
+        val targets = listOf(PingTagTarget.forUsername("alice"))
+        val chunkIndexes = AllPingFormatter.prepareChunkIndexes(targets, longAnnouncement)
+        val session = AllPingSession(
+            id = 1L,
+            chatId = -100L,
+            messageThreadId = null,
+            announcement = longAnnouncement,
+            status = AllPingSessionStatus.ACTIVE,
+            createdAt = Instant.EPOCH,
+            closedAt = null,
+            messages = listOf(
+                AllPingSessionMessage(chunkIndex = 0, messageId = 1L),
+                AllPingSessionMessage(chunkIndex = 1, messageId = 2L),
+            ),
+            participants = listOf(
+                AllPingParticipant(
+                    identityKey = "n:alice",
+                    userId = null,
+                    username = "alice",
+                    displayNameSnapshot = "@alice",
+                    position = 0,
+                    chunkIndex = chunkIndexes.single(),
+                    response = null,
+                ),
+            ),
+        )
+
+        val messages = AllPingFormatter.buildMessageChunks(session)
+
+        assertEquals(listOf(1), chunkIndexes)
+        assertEquals(2, messages.size)
+        assertTrue(messages.all { it.length <= 4_096 })
+        assertEquals("Сбор ответа\n${"A".repeat(4_081)}...", messages.first())
+        assertEquals("@alice - без ответа", messages.last())
+    }
 }

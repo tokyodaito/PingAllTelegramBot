@@ -1,6 +1,7 @@
 package org.bogsnebes.engines
 
 enum class AllPingSessionStatus {
+    PENDING,
     ACTIVE,
     CLOSED,
 }

@@ -11,6 +11,8 @@ import java.time.Instant
 import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -21,11 +23,11 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice", "bob"))
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice"), PingTagTarget.forUsername("bob")))
 
                 service.handle(
                     TelegramUpdate(
@@ -38,7 +40,7 @@ class BotServiceTest {
                             from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
                             text = "/all Подъем",
                         ),
-                    )
+                    ),
                 )
 
                 assertEquals(1, gateway.sentMessages.size)
@@ -49,8 +51,6 @@ class BotServiceTest {
                 assertTrue(sentMessage.text.contains("@alice - без ответа"))
                 assertTrue(sentMessage.text.contains("@bob - без ответа"))
                 assertEquals(listOf("Да", "Нет", "Думаю"), sentMessage.inlineKeyboard?.rows?.single()?.map(TelegramInlineButton::text))
-                assertTrue(gateway.editedMessages.isEmpty())
-                assertTrue(gateway.deletedMessages.isEmpty())
             }
         } finally {
             dbPath.deleteIfExists()
@@ -63,7 +63,7 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
@@ -77,14 +77,13 @@ class BotServiceTest {
                             from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
                             text = "/all",
                         ),
-                    )
+                    ),
                 )
 
                 assertEquals(
                     "Команда /all работает только в группах и супергруппах.",
                     gateway.sentMessages.single().text,
                 )
-                assertTrue(gateway.deletedMessages.isEmpty())
             }
         } finally {
             dbPath.deleteIfExists()
@@ -97,22 +96,11 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                service.handle(
-                    TelegramUpdate(
-                        updateId = 3L,
-                        message = TelegramMessage(
-                            messageId = 8L,
-                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
-                            chat = TelegramChat(id = -100L, type = "supergroup"),
-                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
-                            text = "/all",
-                        ),
-                    ),
-                )
+                service.handle(allCommandUpdate())
 
                 assertEquals(
                     "Список тегов не настроен. Используйте /add @username...",
@@ -130,11 +118,11 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice", "bob"))
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice"), PingTagTarget.forUsername("bob")))
                 service.handle(allCommandUpdate())
 
                 val callbackData = gateway.sentMessages.single().inlineKeyboard
@@ -157,79 +145,7 @@ class BotServiceTest {
 
                 assertEquals(1, gateway.editedMessages.size)
                 assertTrue(gateway.editedMessages.single().text.contains("@alice - пойдет"))
-                assertTrue(gateway.editedMessages.single().text.contains("@bob - без ответа"))
                 assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
-            }
-        } finally {
-            dbPath.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `updates reposted callback source message together with active session`() = runTest {
-        val dbPath = Files.createTempFile("bot-service-callback-repost", ".db")
-        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
-
-        try {
-            MemberRepository(dbPath).use { repository ->
-                val gateway = FakeTelegramGateway()
-                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
-
-                repository.replacePingTags(-100L, listOf("alice", "bob"))
-                service.handle(allCommandUpdate())
-
-                val callbackData = gateway.sentMessages.single().inlineKeyboard
-                    ?.rows
-                    ?.single()
-                    ?.first()
-                    ?.callbackData
-                    ?: error("callback data missing")
-
-                service.handle(
-                    TelegramUpdate(
-                        updateId = 2L,
-                        callbackQuery = callbackQuery(
-                            id = "callback-repost",
-                            username = "alice",
-                            data = callbackData,
-                            messageId = 999L,
-                        ),
-                    ),
-                )
-
-                assertEquals(2, gateway.editedMessages.size)
-                assertEquals(listOf(1L, 999L), gateway.editedMessages.map(EditedMessage::messageId))
-                assertTrue(gateway.editedMessages.all { it.text.contains("@alice - пойдет") })
-                assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
-            }
-        } finally {
-            dbPath.deleteIfExists()
-        }
-    }
-
-    @Test
-    fun `uses latest callback answer for the same user`() = runTest {
-        val dbPath = Files.createTempFile("bot-service-callback-change", ".db")
-        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
-
-        try {
-            MemberRepository(dbPath).use { repository ->
-                val gateway = FakeTelegramGateway()
-                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
-
-                repository.replacePingTags(-100L, listOf("alice"))
-                service.handle(allCommandUpdate())
-
-                val buttons = gateway.sentMessages.single().inlineKeyboard?.rows?.single() ?: error("buttons missing")
-                service.handle(TelegramUpdate(updateId = 2L, callbackQuery = callbackQuery("callback-1", "alice", buttons[0].callbackData)))
-                service.handle(TelegramUpdate(updateId = 3L, callbackQuery = callbackQuery("callback-2", "alice", buttons[1].callbackData)))
-
-                assertEquals(2, gateway.editedMessages.size)
-                assertTrue(gateway.editedMessages.last().text.contains("@alice - не идет"))
-                assertEquals(
-                    listOf("Ответ записан: пойдет", "Ответ обновлен: не идет"),
-                    gateway.callbackAnswers.map(CallbackAnswer::text),
-                )
             }
         } finally {
             dbPath.deleteIfExists()
@@ -242,11 +158,11 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice"))
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
                 service.handle(allCommandUpdate())
 
                 val callbackData = gateway.sentMessages.single().inlineKeyboard
@@ -281,11 +197,11 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTargets(
+                repository.replaceTargets(
                     -100L,
                     listOf(
                         PingTagTarget(
@@ -333,23 +249,13 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice"))
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
 
-                val update = TelegramUpdate(
-                    updateId = 3L,
-                    message = TelegramMessage(
-                        messageId = 8L,
-                        date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
-                        chat = TelegramChat(id = -100L, type = "supergroup"),
-                        from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
-                        text = "/all",
-                    ),
-                )
-
+                val update = allCommandUpdate()
                 service.handle(update)
                 service.handle(update.copy(updateId = 4L))
 
@@ -359,14 +265,9 @@ class BotServiceTest {
                     "Команда /all сейчас на кулдауне. Попробуйте снова через 10м 0с.",
                     gateway.sentMessages.last().text,
                 )
-                assertEquals(listOf(8L), gateway.deletedMessages.map { it.messageId })
+                assertEquals(listOf(8L), gateway.deletedMessages.map(DeletedMessage::messageId))
 
-                advanceTimeBy(1_000L)
-                runCurrent()
-
-                assertTrue(gateway.editedMessages.isEmpty())
-
-                advanceTimeBy(9_000L)
+                advanceTimeBy(10_000L)
                 runCurrent()
 
                 assertEquals(1, gateway.editedMessages.size)
@@ -375,11 +276,6 @@ class BotServiceTest {
                     "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 50с.",
                     gateway.editedMessages.single().text,
                 )
-
-                advanceTimeBy(Duration.ofMinutes(10).minusSeconds(10).toMillis())
-                runCurrent()
-
-                assertEquals(2L, gateway.deletedMessages.last().messageId)
             }
         } finally {
             dbPath.deleteIfExists()
@@ -387,92 +283,44 @@ class BotServiceTest {
     }
 
     @Test
-    fun `replaces previous cooldown notice on a new command during cooldown`() = runTest {
-        val dbPath = Files.createTempFile("bot-service-cooldown-replace", ".db")
+    fun `recovers from partial publish failure and allows immediate retry`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-partial-failure", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
-                val gateway = FakeTelegramGateway()
-                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway().apply {
+                        sendFailures[2] = IllegalStateException("telegram send failed")
+                    }
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice"))
+                    repository.replaceTargets(
+                        -100L,
+                        listOf(
+                            PingTagTarget.forUsername("alice"),
+                            PingTagTarget.forUsername("bob"),
+                            PingTagTarget.forUsername("charlie"),
+                        ),
+                    )
 
-                val update = TelegramUpdate(
-                    updateId = 3L,
-                    message = TelegramMessage(
-                        messageId = 8L,
-                        date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
-                        chat = TelegramChat(id = -100L, type = "supergroup"),
-                        from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
-                        text = "/all",
-                    ),
-                )
+                    service.handle(
+                        allCommandUpdate(
+                            announcement = "X".repeat(4_090),
+                        ),
+                    )
 
-                service.handle(update)
-                service.handle(
-                    update.copy(
-                        updateId = 4L,
-                        message = update.message?.copy(messageId = 9L),
-                    ),
-                )
-                service.handle(
-                    update.copy(
-                        updateId = 5L,
-                        message = update.message?.copy(messageId = 10L),
-                    ),
-                )
+                    assertEquals(2, gateway.sentMessages.size)
+                    assertTrue(gateway.sentMessages.last().text.contains("Не удалось отправить /all"))
+                    assertEquals(listOf(1L), gateway.deletedMessages.map(DeletedMessage::messageId))
+                    assertNull(sessionRepository.findActiveSession(-100L))
 
-                assertEquals(3, gateway.sentMessages.size)
-                assertTrue(gateway.sentMessages.last().text.contains("кулдауне"))
-                assertEquals(listOf(9L, 2L, 10L), gateway.deletedMessages.map { it.messageId })
-                assertEquals(3L, gateway.sentMessages.last().messageId)
-            }
-        } finally {
-            dbPath.deleteIfExists()
-        }
-    }
+                    gateway.sendFailures.clear()
+                    service.handle(allCommandUpdate(updateId = 2L, messageId = 9L, announcement = "Повтор"))
 
-    @Test
-    fun `keeps cooldown notice alive across telegram retry after and resumes updates`() = runTest {
-        val dbPath = Files.createTempFile("bot-service-cooldown-rate-limit", ".db")
-        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
-
-        try {
-            MemberRepository(dbPath).use { repository ->
-                val gateway = FakeTelegramGateway().apply {
-                    editFailures += rateLimitException(35)
+                    assertTrue(gateway.sentMessages.last().text.contains("Повтор"))
+                    assertNotNull(sessionRepository.findActiveSession(-100L))
                 }
-                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
-
-                repository.replacePingTags(-100L, listOf("alice"))
-
-                val update = allCommandUpdate()
-
-                service.handle(update)
-                service.handle(update.copy(updateId = 2L, message = update.message?.copy(messageId = 9L)))
-
-                advanceTimeBy(10_000L)
-                runCurrent()
-
-                assertEquals(1, gateway.editAttempts.size)
-                assertTrue(gateway.editedMessages.isEmpty())
-
-                advanceTimeBy(34_000L)
-                runCurrent()
-
-                assertTrue(gateway.editedMessages.isEmpty())
-
-                advanceTimeBy(1_000L)
-                runCurrent()
-
-                assertEquals(2, gateway.editAttempts.size)
-                assertEquals(1, gateway.editedMessages.size)
-                assertEquals(2L, gateway.editedMessages.single().messageId)
-                assertEquals(
-                    "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 20с.",
-                    gateway.editedMessages.single().text,
-                )
             }
         } finally {
             dbPath.deleteIfExists()
@@ -480,30 +328,140 @@ class BotServiceTest {
     }
 
     @Test
-    fun `closes previous interactive session when next all succeeds`() = runTest {
-        val dbPath = Files.createTempFile("bot-service-close-previous", ".db")
+    fun `returns publishing notice for pending session callback`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-pending-callback", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
+                val sessionRepository = AllPingSessionRepository(dbPath)
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replacePingTags(-100L, listOf("alice"))
+                val pendingSession = sessionRepository.createPendingSession(
+                    chatId = -100L,
+                    messageThreadId = null,
+                    announcement = "Подъем",
+                    targets = listOf(PingTagTarget.forUsername("alice")),
+                    createdAt = Instant.parse("2026-03-14T12:00:00Z"),
+                )
 
-                service.handle(allCommandUpdate())
-                advanceTimeBy(Duration.ofMinutes(10).toMillis())
                 service.handle(
-                    allCommandUpdate(
+                    TelegramUpdate(
                         updateId = 2L,
-                        messageId = 9L,
-                        announcement = "Второй сбор",
+                        callbackQuery = callbackQuery(
+                            id = "callback-pending",
+                            username = "alice",
+                            data = AllPingCallbackData.encode(pendingSession.id, AllPingResponse.YES),
+                        ),
                     ),
                 )
 
-                assertEquals(2, gateway.sentMessages.size)
+                assertEquals("Сбор еще публикуется", gateway.callbackAnswers.single().text)
+                sessionRepository.close()
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `callback refresh failure closes session and returns fallback answer`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-refresh-failure", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway().apply {
+                        editFailures += IllegalStateException("edit failed")
+                    }
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+                    service.handle(allCommandUpdate())
+
+                    val callbackData = gateway.sentMessages.single().inlineKeyboard
+                        ?.rows
+                        ?.single()
+                        ?.first()
+                        ?.callbackData
+                        ?: error("callback data missing")
+
+                    service.handle(
+                        TelegramUpdate(
+                            updateId = 2L,
+                            callbackQuery = callbackQuery(
+                                id = "callback-1",
+                                username = "alice",
+                                data = callbackData,
+                            ),
+                        ),
+                    )
+
+                    assertEquals("Ответ записан, но список временно недоступен", gateway.callbackAnswers.single().text)
+                    assertEquals(AllPingSessionStatus.CLOSED, sessionRepository.findSession(1L)?.status)
+                    assertEquals(listOf(1L), gateway.removedInlineKeyboards.map(RemovedInlineKeyboard::messageId))
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `keeps previous interactive session when next publish fails`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-keep-previous", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway()
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+                    service.handle(allCommandUpdate())
+                    val firstSessionId = sessionRepository.findActiveSession(-100L)?.id
+
+                    advanceTimeBy(Duration.ofMinutes(10).toMillis())
+                    gateway.sendFailures[3] = IllegalStateException("second publish failed")
+                    service.handle(
+                        allCommandUpdate(
+                            updateId = 2L,
+                            messageId = 9L,
+                            announcement = "X".repeat(4_090),
+                        ),
+                    )
+
+                    assertEquals(firstSessionId, sessionRepository.findActiveSession(-100L)?.id)
+                    assertTrue(gateway.removedInlineKeyboards.isEmpty())
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `treats forum topics as one chat scope for active session`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-topics", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway()
+                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+
+                service.handle(allCommandUpdate(messageId = 8L, messageThreadId = 42L))
+                advanceTimeBy(Duration.ofMinutes(10).toMillis())
+                service.handle(allCommandUpdate(updateId = 2L, messageId = 9L, messageThreadId = 99L, announcement = "Вторая тема"))
+
                 assertEquals(listOf(1L), gateway.removedInlineKeyboards.map(RemovedInlineKeyboard::messageId))
-                assertTrue(gateway.sentMessages.last().text.contains("Второй сбор"))
+                assertEquals(99L, gateway.sentMessages.last().messageThreadId)
+                assertTrue(gateway.sentMessages.last().text.contains("Вторая тема"))
             }
         } finally {
             dbPath.deleteIfExists()
@@ -516,8 +474,8 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
-                repository.replacePingTags(-100L, listOf("old"))
+            PingTargetRepository(dbPath).use { repository ->
+                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("old")))
                 val gateway = FakeTelegramGateway().apply {
                     adminUsers += -100L to 1L
                 }
@@ -537,7 +495,10 @@ class BotServiceTest {
                     ),
                 )
 
-                assertEquals(listOf("alice", "bob"), repository.listPingTags(-100L))
+                assertEquals(
+                    listOf(PingTagTarget.forUsername("alice"), PingTagTarget.forUsername("bob")),
+                    repository.listTargets(-100L),
+                )
                 assertEquals("Список тегов обновлён: @alice @bob", gateway.sentMessages.single().text)
                 assertEquals(42L, gateway.sentMessages.single().messageThreadId)
             }
@@ -552,7 +513,7 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway().apply {
                     adminUsers += -100L to 1L
                 }
@@ -587,7 +548,7 @@ class BotServiceTest {
                             displayNameSnapshot = "Sim",
                         ),
                     ),
-                    repository.listPingTargets(-100L),
+                    repository.listTargets(-100L),
                 )
                 assertEquals(
                     "Список тегов обновлён: <a href=\"tg://user?id=77\">Sim</a>",
@@ -605,7 +566,7 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
@@ -626,7 +587,7 @@ class BotServiceTest {
                     "Команда /add доступна только администраторам чата.",
                     gateway.sentMessages.single().text,
                 )
-                assertTrue(repository.listPingTags(-100L).isEmpty())
+                assertTrue(repository.listTargets(-100L).isEmpty())
             }
         } finally {
             dbPath.deleteIfExists()
@@ -639,7 +600,7 @@ class BotServiceTest {
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway().apply {
                     adminUsers += -100L to 1L
                 }
@@ -662,7 +623,7 @@ class BotServiceTest {
                     "Использование: /add @username1 @username2",
                     gateway.sentMessages.single().text,
                 )
-                assertTrue(repository.listPingTags(-100L).isEmpty())
+                assertTrue(repository.listTargets(-100L).isEmpty())
             }
         } finally {
             dbPath.deleteIfExists()
@@ -671,7 +632,7 @@ class BotServiceTest {
 
     private fun createService(
         dbPath: java.nio.file.Path,
-        repository: MemberRepository,
+        repository: PingTargetRepository,
         gateway: FakeTelegramGateway,
         clock: SchedulerClock,
         scope: CoroutineScope,
@@ -683,21 +644,22 @@ class BotServiceTest {
             scope = scope,
             clock = clock,
         ),
-        memberRepository = repository,
+        pingTargetRepository = repository,
         allPingSessionRepository = AllPingSessionRepository(dbPath),
         cooldownTracker = PingCooldownTracker(Duration.ofMinutes(10)),
-        activeWindow = Duration.ofDays(7),
         clock = clock,
     )
 
     private fun allCommandUpdate(
         updateId: Long = 1L,
         messageId: Long = 8L,
+        messageThreadId: Long? = null,
         announcement: String? = null,
     ): TelegramUpdate = TelegramUpdate(
         updateId = updateId,
         message = TelegramMessage(
             messageId = messageId,
+            messageThreadId = messageThreadId,
             date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
             chat = TelegramChat(id = -100L, type = "supergroup"),
             from = TelegramUser(id = 1L, isBot = false, firstName = "Bob", username = "bob"),

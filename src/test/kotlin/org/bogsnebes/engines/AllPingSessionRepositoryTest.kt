@@ -7,6 +7,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AllPingSessionRepositoryTest {
@@ -97,29 +98,60 @@ class AllPingSessionRepositoryTest {
     }
 
     @Test
-    fun `stores and updates user mention participants by identity key`() {
+    fun `stores pending session and activates it after publish`() {
         val dbPath = Files.createTempFile("all-ping-targets", ".db")
 
         try {
             AllPingSessionRepository(dbPath).use { repository ->
-                val session = repository.createSession(
+                val session = repository.createPendingSession(
                     chatId = -100L,
                     messageThreadId = null,
                     announcement = "Wake up",
-                    targets = listOf(
-                        PingTagTarget(
-                            identityKey = "u:77",
-                            userId = 77L,
-                            username = null,
-                            displayNameSnapshot = "Sim",
-                        ),
-                    ),
+                    targets = listOf(PingTagTarget.forUsername("alice")),
                     createdAt = Instant.EPOCH,
                 )
 
-                assertEquals("u:77", session.participants.single().identityKey)
-                assertTrue(repository.updateResponse(session.id, "u:77", AllPingResponse.YES, Instant.EPOCH))
-                assertEquals(AllPingResponse.YES, repository.findSession(session.id)?.participants?.single()?.response)
+                assertEquals(AllPingSessionStatus.PENDING, session.status)
+                assertNull(repository.findActiveSession(-100L))
+                assertTrue(repository.activateSession(session.id))
+                assertEquals(AllPingSessionStatus.ACTIVE, repository.findActiveSession(-100L)?.status)
+            }
+        } finally {
+            assertTrue(dbPath.deleteIfExists())
+        }
+    }
+
+    @Test
+    fun `stores incremental message ids for pending publish`() {
+        val dbPath = Files.createTempFile("all-ping-messages", ".db")
+
+        try {
+            AllPingSessionRepository(dbPath).use { repository ->
+                val session = repository.createPendingSession(
+                    chatId = -100L,
+                    messageThreadId = null,
+                    announcement = "Wake up",
+                    targets = listOf(PingTagTarget.forUsername("alice"), PingTagTarget.forUsername("bob")),
+                    createdAt = Instant.EPOCH,
+                )
+
+                repository.saveMessages(
+                    session.id,
+                    listOf(TelegramSentMessage(chatId = -100L, messageId = 11L)),
+                )
+                assertEquals(listOf(11L), repository.findSession(session.id)?.messages?.map(AllPingSessionMessage::messageId))
+
+                repository.saveMessages(
+                    session.id,
+                    listOf(
+                        TelegramSentMessage(chatId = -100L, messageId = 11L),
+                        TelegramSentMessage(chatId = -100L, messageId = 12L),
+                    ),
+                )
+                assertEquals(
+                    listOf(11L, 12L),
+                    repository.findSession(session.id)?.messages?.map(AllPingSessionMessage::messageId),
+                )
             }
         } finally {
             assertTrue(dbPath.deleteIfExists())

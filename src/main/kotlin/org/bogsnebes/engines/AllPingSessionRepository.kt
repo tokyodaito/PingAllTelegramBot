@@ -14,7 +14,7 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
         initialize()
     }
 
-    fun createSession(
+    fun createPendingSession(
         chatId: Long,
         messageThreadId: Long?,
         announcement: String?,
@@ -42,12 +42,12 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
                 statement.setLong(1, chatId)
                 statement.setObject(2, messageThreadId)
                 statement.setString(3, announcement)
-                statement.setString(4, AllPingSessionStatus.ACTIVE.name)
+                statement.setString(4, AllPingSessionStatus.PENDING.name)
                 statement.setLong(5, createdAt.toEpochMilli())
                 statement.executeUpdate()
                 statement.generatedKeys.use { keys ->
                     if (!keys.next()) {
-                        error("Failed to create all ping session for chat $chatId")
+                        error("Failed to create pending all ping session for chat $chatId")
                     }
                     keys.getLong(1)
                 }
@@ -274,6 +274,22 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
         }
     }
 
+    fun activateSession(sessionId: Long): Boolean {
+        connection.prepareStatement(
+            """
+            UPDATE all_ping_sessions
+            SET status = ?
+            WHERE id = ?
+              AND status = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, AllPingSessionStatus.ACTIVE.name)
+            statement.setLong(2, sessionId)
+            statement.setString(3, AllPingSessionStatus.PENDING.name)
+            return statement.executeUpdate() > 0
+        }
+    }
+
     fun closeSession(sessionId: Long, closedAt: Instant) {
         connection.prepareStatement(
             """
@@ -281,13 +297,13 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
             SET status = ?,
                 closed_at = ?
             WHERE id = ?
-              AND status = ?
+              AND status != ?
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, AllPingSessionStatus.CLOSED.name)
             statement.setLong(2, closedAt.toEpochMilli())
             statement.setLong(3, sessionId)
-            statement.setString(4, AllPingSessionStatus.ACTIVE.name)
+            statement.setString(4, AllPingSessionStatus.CLOSED.name)
             statement.executeUpdate()
         }
     }

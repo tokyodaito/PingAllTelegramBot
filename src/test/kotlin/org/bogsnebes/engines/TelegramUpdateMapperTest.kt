@@ -14,56 +14,6 @@ import kotlin.test.assertTrue
 
 class TelegramUpdateMapperTest {
     @Test
-    fun `maps message update with new chat members`() {
-        val update = assertNotNull(
-            TelegramUpdateMapper.map(
-                decodeLibraryUpdate(
-                    """
-                    {
-                      "update_id": 1001,
-                      "message": {
-                        "message_id": 10,
-                        "date": 1773489600,
-                        "chat": {
-                          "id": -200,
-                          "type": "supergroup",
-                          "title": "Team"
-                        },
-                        "from": {
-                          "id": 10,
-                          "is_bot": false,
-                          "first_name": "Owner",
-                          "username": "owner"
-                        },
-                        "new_chat_members": [
-                          {
-                            "id": 11,
-                            "is_bot": false,
-                            "first_name": "New",
-                            "last_name": "User",
-                            "username": "new_user"
-                          }
-                        ]
-                      }
-                    }
-                    """,
-                ),
-            ),
-        )
-
-        val message = assertNotNull(update.message)
-        assertEquals(1001L, update.updateId)
-        assertEquals(10L, message.messageId)
-        assertEquals(-200L, message.chat.id)
-        assertEquals("supergroup", message.chat.type)
-        assertEquals("owner", message.from?.username)
-        assertTrue(message.textSources.isEmpty())
-        assertEquals(1, message.newChatMembers.size)
-        assertEquals(11L, message.newChatMembers.single().id)
-        assertEquals("new_user", message.newChatMembers.single().username)
-    }
-
-    @Test
     fun `maps text mention entities into message text sources`() {
         val update = assertNotNull(
             TelegramUpdateMapper.map(
@@ -179,11 +129,11 @@ class TelegramUpdateMapperTest {
     }
 
     @Test
-    fun `maps chat member updates and dispatches mapped command to bot service`() = runTest {
+    fun `maps topic command update and dispatches thread id to bot service`() = runTest {
         val dbPath = Files.createTempFile("dispatch", ".db")
 
         try {
-            MemberRepository(dbPath).use { repository ->
+            PingTargetRepository(dbPath).use { repository ->
                 val gateway = FakeTelegramGateway()
                 val service = BotService(
                     botUser = TelegramUser(id = 999L, isBot = true, firstName = "PingAll", username = "PingAllBot"),
@@ -193,22 +143,25 @@ class TelegramUpdateMapperTest {
                         scope = backgroundScope,
                         clock = Clock.fixed(Instant.parse("2026-03-14T12:00:00Z"), ZoneOffset.UTC),
                     ),
-                    memberRepository = repository,
+                    pingTargetRepository = repository,
                     allPingSessionRepository = AllPingSessionRepository(dbPath),
                     cooldownTracker = PingCooldownTracker(java.time.Duration.ofMinutes(10)),
-                    activeWindow = java.time.Duration.ofDays(7),
                     clock = Clock.fixed(Instant.parse("2026-03-14T12:00:00Z"), ZoneOffset.UTC),
                 )
 
-                val newMembersUpdate = assertNotNull(
+                repository.replaceTargets(-200L, listOf(PingTagTarget.forUsername("new_user")))
+
+                val commandUpdate = assertNotNull(
                     TelegramUpdateMapper.map(
                         decodeLibraryUpdate(
                             """
                             {
-                              "update_id": 1001,
+                              "update_id": 1003,
                               "message": {
-                                "message_id": 10,
-                                "date": 1773489600,
+                                "message_id": 11,
+                                "message_thread_id": 77,
+                                "is_topic_message": true,
+                                "date": 1773489720,
                                 "chat": {
                                   "id": -200,
                                   "type": "supergroup",
@@ -221,15 +174,7 @@ class TelegramUpdateMapperTest {
                                   "first_name": "Owner",
                                   "username": "owner"
                                 },
-                                "new_chat_members": [
-                                  {
-                                    "id": 11,
-                                    "is_bot": false,
-                                    "first_name": "New",
-                                    "last_name": "User",
-                                    "username": "new_user"
-                                  }
-                                ]
+                                "text": "/all Wake up"
                               }
                             }
                             """,
@@ -237,93 +182,8 @@ class TelegramUpdateMapperTest {
                     ),
                 )
 
-                val memberUpdate = assertNotNull(
-                    TelegramUpdateMapper.map(
-                        decodeLibraryUpdate(
-                            """
-                            {
-                              "update_id": 1002,
-                              "chat_member": {
-                                "chat": {
-                                  "id": -200,
-                                  "type": "supergroup",
-                                  "title": "Team"
-                                },
-                                "from": {
-                                  "id": 10,
-                                  "is_bot": false,
-                                  "first_name": "Owner",
-                                  "username": "owner"
-                                },
-                                "date": 1773489660,
-                                "old_chat_member": {
-                                  "user": {
-                                    "id": 11,
-                                    "is_bot": false,
-                                    "first_name": "New",
-                                    "last_name": "User",
-                                    "username": "new_user"
-                                  },
-                                  "status": "member"
-                                },
-                                "new_chat_member": {
-                                  "user": {
-                                    "id": 11,
-                                    "is_bot": false,
-                                    "first_name": "New",
-                                    "last_name": "User",
-                                    "username": "new_user"
-                                  },
-                                  "status": "administrator"
-                                }
-                              }
-                            }
-                            """,
-                        ),
-                    ),
-                )
-
-                val libraryCommandUpdate = decodeLibraryUpdate(
-                    """
-                    {
-                      "update_id": 1003,
-                      "message": {
-                        "message_id": 11,
-                        "message_thread_id": 77,
-                        "is_topic_message": true,
-                        "date": 1773489720,
-                        "chat": {
-                          "id": -200,
-                          "type": "supergroup",
-                          "is_forum": true,
-                          "title": "Team"
-                        },
-                        "from": {
-                          "id": 10,
-                          "is_bot": false,
-                          "first_name": "Owner",
-                          "username": "owner"
-                        },
-                        "text": "/all Wake up"
-                      }
-                    }
-                    """,
-                )
-
-                val commandUpdate = assertNotNull(TelegramUpdateMapper.map(libraryCommandUpdate))
-
-                service.handle(newMembersUpdate)
-                service.handle(memberUpdate)
-                repository.replacePingTags(-200L, listOf("new_user"))
                 service.handle(commandUpdate)
 
-                val members = repository.listMentionableMembers(
-                    chatId = -200,
-                    activeSince = Instant.parse("2026-03-01T00:00:00Z"),
-                )
-
-                assertEquals(2, members.size)
-                assertEquals("administrator", members.first { it.userId == 11L }.status)
                 assertEquals(1, gateway.sentMessages.size)
                 assertEquals(77L, gateway.sentMessages.single().messageThreadId)
                 assertTrue(gateway.sentMessages.single().text.contains("Wake up"))

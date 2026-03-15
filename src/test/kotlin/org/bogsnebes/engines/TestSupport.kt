@@ -30,7 +30,9 @@ class FakeTelegramGateway : TelegramGateway {
     val removedInlineKeyboards = mutableListOf<RemovedInlineKeyboard>()
     val adminUsers = mutableSetOf<Pair<Long, Long>>()
     val editFailures = ArrayDeque<Throwable>()
+    val sendFailures = mutableMapOf<Int, Throwable>()
     private var nextMessageId = 1L
+    private var sendCallCount = 0
 
     override suspend fun sendMessage(
         chatId: Long,
@@ -38,6 +40,9 @@ class FakeTelegramGateway : TelegramGateway {
         messageThreadId: Long?,
         inlineKeyboard: TelegramInlineKeyboard?,
     ): TelegramSentMessage {
+        sendCallCount += 1
+        sendFailures.remove(sendCallCount)?.let { throw it }
+
         val sentMessage = SentMessage(
             chatId = chatId,
             messageId = nextMessageId++,
