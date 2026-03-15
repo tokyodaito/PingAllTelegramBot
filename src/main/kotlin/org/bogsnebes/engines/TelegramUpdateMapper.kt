@@ -19,6 +19,9 @@ import dev.inmo.tgbotapi.types.message.abstracts.GroupEventMessage
 import dev.inmo.tgbotapi.types.message.abstracts.OptionallyFromUserMessage
 import dev.inmo.tgbotapi.types.message.abstracts.PossiblyTopicMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
+import dev.inmo.tgbotapi.types.message.textsources.MentionTextSource
+import dev.inmo.tgbotapi.types.message.textsources.TextMentionTextSource
+import dev.inmo.tgbotapi.types.message.textsources.TextSource
 import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
 import dev.inmo.tgbotapi.types.queries.callback.MessageCallbackQuery
 import dev.inmo.tgbotapi.types.update.CallbackQueryUpdate
@@ -70,6 +73,7 @@ object TelegramUpdateMapper {
             chat = message.chat.toTelegramChat(),
             from = (message as? OptionallyFromUserMessage)?.from?.toTelegramUser(),
             text = (content as? TextedContent)?.text,
+            textSources = (content as? TextedContent)?.textSources?.map(TextSource::toTelegramTextSource).orEmpty(),
             newChatMembers = newChatMembers,
         )
     }
@@ -121,3 +125,17 @@ private fun ChatMember.toTelegramChatMember(): TelegramChatMember = TelegramChat
     user = user.toTelegramUser(),
     status = status.status,
 )
+
+private fun TextSource.toTelegramTextSource(): TelegramMessageTextSource = when (this) {
+    is MentionTextSource -> TelegramMentionTextSource(
+        username = source.removePrefix("@").lowercase(),
+        source = source,
+    )
+
+    is TextMentionTextSource -> TelegramTextMentionTextSource(
+        user = user.toTelegramUser(),
+        source = source,
+    )
+
+    else -> TelegramRegularTextSource(source = source)
+}

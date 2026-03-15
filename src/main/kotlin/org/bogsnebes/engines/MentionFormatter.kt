@@ -6,16 +6,32 @@ object MentionFormatter {
 
     fun buildMessages(members: List<KnownMember>, announcement: String?): List<String> {
         return buildMessageChunks(
-            mentions = members.map(::toMention),
+            mentions = members.map(::renderKnownMember),
             announcement = announcement,
         )
     }
 
     fun buildTagMessages(usernames: List<String>, announcement: String?): List<String> {
         return buildMessageChunks(
-            mentions = usernames.map { "@$it" },
+            mentions = usernames.map { renderTarget(username = it, displayNameSnapshot = "@$it") },
             announcement = announcement,
         )
+    }
+
+    fun renderTarget(target: PingTagTarget): String = renderTarget(
+        userId = target.userId,
+        username = target.username,
+        displayNameSnapshot = target.displayNameSnapshot,
+    )
+
+    fun renderTarget(
+        userId: Long? = null,
+        username: String? = null,
+        displayNameSnapshot: String,
+    ): String = when {
+        userId != null -> """<a href="tg://user?id=$userId">${escapeHtml(displayNameSnapshot)}</a>"""
+        !username.isNullOrBlank() -> "@${escapeHtml(username)}"
+        else -> escapeHtml(displayNameSnapshot)
     }
 
     fun escapeHtml(value: String): String = buildString(value.length) {
@@ -30,9 +46,11 @@ object MentionFormatter {
         }
     }
 
-    private fun toMention(member: KnownMember): String {
-        return """<a href="tg://user?id=${member.userId}">${escapeHtml(member.displayNameSnapshot)}</a>"""
-    }
+    private fun renderKnownMember(member: KnownMember): String = renderTarget(
+        userId = member.userId,
+        username = member.username,
+        displayNameSnapshot = member.displayNameSnapshot,
+    )
 
     private fun buildMessageChunks(mentions: List<String>, announcement: String?): List<String> {
         val header = announcement

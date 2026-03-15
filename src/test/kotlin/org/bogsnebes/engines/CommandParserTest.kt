@@ -30,7 +30,44 @@ class CommandParserTest {
     fun `parses add command with normalization and deduplication`() {
         val command = CommandParser.parse("/add @Alice @bob @ALICE", "PingAllBot")
 
-        assertEquals(AddCommand(listOf("alice", "bob")), command)
+        assertEquals(
+            AddCommand(
+                listOf(
+                    PingTagTarget.forUsername("alice"),
+                    PingTagTarget.forUsername("bob"),
+                ),
+            ),
+            command,
+        )
+    }
+
+    @Test
+    fun `parses add command with text mention target`() {
+        val command = CommandParser.parse(
+            text = "/add Sim",
+            botUsername = "PingAllBot",
+            textSources = listOf(
+                TelegramRegularTextSource("/add "),
+                TelegramTextMentionTextSource(
+                    user = TelegramUser(id = 77L, isBot = false, firstName = "Sim", username = null),
+                    source = "Sim",
+                ),
+            ),
+        )
+
+        assertEquals(
+            AddCommand(
+                listOf(
+                    PingTagTarget(
+                        identityKey = "u:77",
+                        userId = 77L,
+                        username = null,
+                        displayNameSnapshot = "Sim",
+                    ),
+                ),
+            ),
+            command,
+        )
     }
 
     @Test

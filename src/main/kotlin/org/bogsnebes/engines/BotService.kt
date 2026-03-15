@@ -24,7 +24,7 @@ class BotService(
     }
 
     private suspend fun handleMessage(message: TelegramMessage) {
-        val command = message.text?.let { CommandParser.parse(it, botUser.username) }
+        val command = message.text?.let { CommandParser.parse(it, botUser.username, message.textSources) }
 
         if (!message.chat.isGroupLike()) {
             when (command) {
@@ -78,8 +78,8 @@ class BotService(
     }
 
     private suspend fun handleAllCommand(message: TelegramMessage, command: AllCommand) {
-        val usernames = memberRepository.listPingTags(message.chat.id)
-        if (usernames.isEmpty()) {
+        val targets = memberRepository.listPingTargets(message.chat.id)
+        if (targets.isEmpty()) {
             telegramGateway.sendMessage(
                 chatId = message.chat.id,
                 text = "Список тегов не настроен. Используйте /add @username...",
@@ -106,7 +106,7 @@ class BotService(
             chatId = message.chat.id,
             messageThreadId = message.messageThreadId,
             announcement = command.announcement,
-            usernames = usernames,
+            targets = targets,
             createdAt = now,
         )
         val messages = AllPingFormatter.buildMessageChunks(session)
@@ -122,7 +122,7 @@ class BotService(
         allPingSessionRepository.saveMessages(session.id, sentMessages)
 
         logger.info(
-            "Sent interactive /all for ${usernames.size} ping tags across ${messages.size} messages for chat ${message.chat.id}"
+            "Sent interactive /all for ${targets.size} ping tags across ${messages.size} messages for chat ${message.chat.id}"
         )
     }
 
@@ -136,10 +136,10 @@ class BotService(
             return
         }
 
-        memberRepository.replacePingTags(message.chat.id, command.usernames)
+        memberRepository.replacePingTargets(message.chat.id, command.targets)
         telegramGateway.sendMessage(
             chatId = message.chat.id,
-            text = "Список тегов обновлён: ${command.usernames.joinToString(" ") { "@$it" }}",
+            text = "Список тегов обновлён: ${command.targets.joinToString(" ", transform = MentionFormatter::renderTarget)}",
             messageThreadId = message.messageThreadId,
         )
     }
@@ -170,12 +170,13 @@ class BotService(
         }
 
         val username = callbackQuery.from.username?.lowercase()
-        if (username == null) {
-            telegramGateway.answerCallbackQuery(callbackQuery.id, "Тебя нет в списке этого /all")
-            return
+        val participant = session.participants.firstOrNull { participant ->
+            when {
+                participant.userId != null -> participant.userId == callbackQuery.from.id
+                username != null && participant.username != null -> participant.username == username
+                else -> false
+            }
         }
-
-        val participant = session.participants.firstOrNull { it.username == username }
         if (participant == null) {
             telegramGateway.answerCallbackQuery(callbackQuery.id, "Тебя нет в списке этого /all")
             return
@@ -183,7 +184,7 @@ class BotService(
 
         allPingSessionRepository.updateResponse(
             sessionId = session.id,
-            username = username,
+            identityKey = participant.identityKey,
             response = decoded.response,
             respondedAt = Instant.now(clock),
         )

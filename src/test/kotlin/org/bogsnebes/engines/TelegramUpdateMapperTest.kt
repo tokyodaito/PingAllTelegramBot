@@ -57,9 +57,71 @@ class TelegramUpdateMapperTest {
         assertEquals(-200L, message.chat.id)
         assertEquals("supergroup", message.chat.type)
         assertEquals("owner", message.from?.username)
+        assertTrue(message.textSources.isEmpty())
         assertEquals(1, message.newChatMembers.size)
         assertEquals(11L, message.newChatMembers.single().id)
         assertEquals("new_user", message.newChatMembers.single().username)
+    }
+
+    @Test
+    fun `maps text mention entities into message text sources`() {
+        val update = assertNotNull(
+            TelegramUpdateMapper.map(
+                decodeLibraryUpdate(
+                    """
+                    {
+                      "update_id": 1005,
+                      "message": {
+                        "message_id": 12,
+                        "date": 1773489800,
+                        "chat": {
+                          "id": -200,
+                          "type": "supergroup",
+                          "title": "Team"
+                        },
+                        "from": {
+                          "id": 10,
+                          "is_bot": false,
+                          "first_name": "Owner",
+                          "username": "owner"
+                        },
+                        "text": "/add Sim",
+                        "entities": [
+                          {
+                            "offset": 0,
+                            "length": 4,
+                            "type": "bot_command"
+                          },
+                          {
+                            "offset": 5,
+                            "length": 3,
+                            "type": "text_mention",
+                            "user": {
+                              "id": 77,
+                              "is_bot": false,
+                              "first_name": "Sim"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                    """,
+                ),
+            ),
+        )
+
+        val message = assertNotNull(update.message)
+        assertEquals(
+            listOf(
+                TelegramRegularTextSource("/add"),
+                TelegramRegularTextSource(" "),
+                TelegramTextMentionTextSource(
+                    user = TelegramUser(id = 77L, isBot = false, firstName = "Sim"),
+                    source = "Sim",
+                ),
+            ),
+            message.textSources,
+        )
     }
 
     @Test

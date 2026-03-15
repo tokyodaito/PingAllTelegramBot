@@ -16,15 +16,15 @@ object AllPingFormatter {
         ),
     )
 
-    fun prepareChunkIndexes(usernames: List<String>, announcement: String?): List<Int> {
+    fun prepareChunkIndexes(targets: List<PingTagTarget>, announcement: String?): List<Int> {
         val chunkIndexes = mutableListOf<Int>()
         val header = buildHeader(announcement)
         var currentChunkIndex = 0
         var currentChunkLength = header.length
         var chunkHasLines = false
 
-        usernames.forEach { username ->
-            val line = buildLine(username, null)
+        targets.forEach { target ->
+            val line = buildLine(target.userId, target.username, target.displayNameSnapshot, null)
             val separatorLength = when {
                 currentChunkIndex == 0 && !chunkHasLines -> "\n\n".length
                 chunkHasLines -> "\n".length
@@ -72,7 +72,14 @@ object AllPingFormatter {
                     chunkIndex == 0 && index == 0 -> builder.append("\n\n")
                     index > 0 -> builder.append('\n')
                 }
-                builder.append(buildLine(participant.username, participant.response))
+                builder.append(
+                    buildLine(
+                        userId = participant.userId,
+                        username = participant.username,
+                        displayNameSnapshot = participant.displayNameSnapshot,
+                        response = participant.response,
+                    ),
+                )
             }
 
             builder.toString()
@@ -92,8 +99,13 @@ object AllPingFormatter {
         }
     }
 
-    private fun buildLine(username: String, response: AllPingResponse?): String {
+    private fun buildLine(
+        userId: Long?,
+        username: String?,
+        displayNameSnapshot: String,
+        response: AllPingResponse?,
+    ): String {
         val status = response?.statusText ?: noResponseText
-        return "@${MentionFormatter.escapeHtml(username)} - $status"
+        return "${MentionFormatter.renderTarget(userId, username, displayNameSnapshot)} - $status"
     }
 }

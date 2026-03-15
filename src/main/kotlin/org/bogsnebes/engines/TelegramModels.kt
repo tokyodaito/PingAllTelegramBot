@@ -14,6 +14,7 @@ data class TelegramMessage(
     val chat: TelegramChat,
     val from: TelegramUser? = null,
     val text: String? = null,
+    val textSources: List<TelegramMessageTextSource> = emptyList(),
     val newChatMembers: List<TelegramUser> = emptyList(),
 )
 
@@ -45,6 +46,24 @@ data class TelegramUser(
     val lastName: String? = null,
     val username: String? = null,
 )
+
+sealed interface TelegramMessageTextSource {
+    val source: String
+}
+
+data class TelegramRegularTextSource(
+    override val source: String,
+) : TelegramMessageTextSource
+
+data class TelegramMentionTextSource(
+    val username: String,
+    override val source: String,
+) : TelegramMessageTextSource
+
+data class TelegramTextMentionTextSource(
+    val user: TelegramUser,
+    override val source: String,
+) : TelegramMessageTextSource
 
 data class TelegramChatMemberUpdated(
     val chat: TelegramChat,

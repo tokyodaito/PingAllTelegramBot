@@ -18,10 +18,10 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
         chatId: Long,
         messageThreadId: Long?,
         announcement: String?,
-        usernames: List<String>,
+        targets: List<PingTagTarget>,
         createdAt: Instant,
     ): AllPingSession {
-        val chunkIndexes = AllPingFormatter.prepareChunkIndexes(usernames, announcement)
+        val chunkIndexes = AllPingFormatter.prepareChunkIndexes(targets, announcement)
         val previousAutoCommit = connection.autoCommit
         connection.autoCommit = false
 
@@ -57,19 +57,25 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
                 """
                 INSERT INTO all_ping_session_participants (
                     session_id,
+                    identity_key,
+                    user_id,
                     username,
+                    display_name_snapshot,
                     position,
                     chunk_index,
                     response_code,
                     responded_at
-                ) VALUES (?, ?, ?, ?, NULL, NULL)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """.trimIndent(),
             ).use { statement ->
-                usernames.forEachIndexed { index, username ->
+                targets.forEachIndexed { index, target ->
                     statement.setLong(1, sessionId)
-                    statement.setString(2, username)
-                    statement.setInt(3, index)
-                    statement.setInt(4, chunkIndexes[index])
+                    statement.setString(2, target.identityKey)
+                    statement.setObject(3, target.userId)
+                    statement.setString(4, target.username)
+                    statement.setString(5, target.displayNameSnapshot)
+                    statement.setInt(6, index)
+                    statement.setInt(7, chunkIndexes[index])
                     statement.addBatch()
                 }
                 statement.executeBatch()
@@ -207,7 +213,7 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
 
         val participants = connection.prepareStatement(
             """
-            SELECT username, position, chunk_index, response_code
+            SELECT identity_key, user_id, username, display_name_snapshot, position, chunk_index, response_code
             FROM all_ping_session_participants
             WHERE session_id = ?
             ORDER BY position ASC
@@ -219,7 +225,10 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
                     while (resultSet.next()) {
                         add(
                             AllPingParticipant(
+                                identityKey = resultSet.getString("identity_key"),
+                                userId = resultSet.getLong("user_id").takeIf { !resultSet.wasNull() },
                                 username = resultSet.getString("username"),
+                                displayNameSnapshot = resultSet.getString("display_name_snapshot"),
                                 position = resultSet.getInt("position"),
                                 chunkIndex = resultSet.getInt("chunk_index"),
                                 response = resultSet.getString("response_code")?.let(AllPingResponse::valueOf),
@@ -245,7 +254,7 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
 
     fun updateResponse(
         sessionId: Long,
-        username: String,
+        identityKey: String,
         response: AllPingResponse,
         respondedAt: Instant,
     ): Boolean {
@@ -254,13 +263,13 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
             UPDATE all_ping_session_participants
             SET response_code = ?, responded_at = ?
             WHERE session_id = ?
-              AND username = ?
+              AND identity_key = ?
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, response.name)
             statement.setLong(2, respondedAt.toEpochMilli())
             statement.setLong(3, sessionId)
-            statement.setString(4, username)
+            statement.setString(4, identityKey)
             return statement.executeUpdate() > 0
         }
     }
@@ -323,16 +332,20 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
                 """
                 CREATE TABLE IF NOT EXISTS all_ping_session_participants (
                     session_id INTEGER NOT NULL,
-                    username TEXT NOT NULL,
+                    identity_key TEXT NOT NULL,
+                    user_id INTEGER,
+                    username TEXT,
+                    display_name_snapshot TEXT NOT NULL,
                     position INTEGER NOT NULL,
                     chunk_index INTEGER NOT NULL,
                     response_code TEXT,
                     responded_at INTEGER,
-                    PRIMARY KEY(session_id, username)
+                    PRIMARY KEY(session_id, identity_key)
                 )
                 """.trimIndent(),
             )
         }
+        migrateLegacyParticipantsIfNeeded()
     }
 
     private fun openConnection(databasePath: Path): Connection {
@@ -349,4 +362,80 @@ class AllPingSessionRepository(databasePath: Path) : Closeable {
         val createdAt: Instant,
         val closedAt: Instant?,
     )
+
+    private fun migrateLegacyParticipantsIfNeeded() {
+        val columns = tableColumns("all_ping_session_participants")
+        if ("identity_key" in columns && "display_name_snapshot" in columns && "user_id" in columns) {
+            return
+        }
+
+        val previousAutoCommit = connection.autoCommit
+        connection.autoCommit = false
+        try {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE all_ping_session_participants RENAME TO all_ping_session_participants_legacy")
+                statement.execute(
+                    """
+                    CREATE TABLE all_ping_session_participants (
+                        session_id INTEGER NOT NULL,
+                        identity_key TEXT NOT NULL,
+                        user_id INTEGER,
+                        username TEXT,
+                        display_name_snapshot TEXT NOT NULL,
+                        position INTEGER NOT NULL,
+                        chunk_index INTEGER NOT NULL,
+                        response_code TEXT,
+                        responded_at INTEGER,
+                        PRIMARY KEY(session_id, identity_key)
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    INSERT INTO all_ping_session_participants (
+                        session_id,
+                        identity_key,
+                        user_id,
+                        username,
+                        display_name_snapshot,
+                        position,
+                        chunk_index,
+                        response_code,
+                        responded_at
+                    )
+                    SELECT
+                        session_id,
+                        'n:' || lower(username),
+                        NULL,
+                        lower(username),
+                        '@' || lower(username),
+                        position,
+                        chunk_index,
+                        response_code,
+                        responded_at
+                    FROM all_ping_session_participants_legacy
+                    """.trimIndent(),
+                )
+                statement.execute("DROP TABLE all_ping_session_participants_legacy")
+            }
+            connection.commit()
+        } catch (error: Throwable) {
+            connection.rollback()
+            throw error
+        } finally {
+            connection.autoCommit = previousAutoCommit
+        }
+    }
+
+    private fun tableColumns(tableName: String): Set<String> {
+        connection.createStatement().use { statement ->
+            statement.executeQuery("PRAGMA table_info($tableName)").use { resultSet ->
+                val columns = linkedSetOf<String>()
+                while (resultSet.next()) {
+                    columns += resultSet.getString("name")
+                }
+                return columns
+            }
+        }
+    }
 }

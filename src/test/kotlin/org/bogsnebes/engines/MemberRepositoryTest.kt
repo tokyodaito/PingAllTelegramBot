@@ -1,6 +1,7 @@
 package org.bogsnebes.engines
 
 import java.nio.file.Files
+import java.sql.DriverManager
 import java.time.Instant
 import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
@@ -69,6 +70,52 @@ class MemberRepositoryTest {
 
                 assertEquals(listOf("charlie", "alice"), repository.listPingTags(10L))
                 assertEquals(listOf("other"), repository.listPingTags(20L))
+            }
+        } finally {
+            assertTrue(dbPath.deleteIfExists())
+        }
+    }
+
+    @Test
+    fun `migrates legacy ping tags table to identity based targets`() {
+        val dbPath = Files.createTempFile("members-tags-legacy", ".db")
+
+        try {
+            DriverManager.getConnection("jdbc:sqlite:${dbPath.toAbsolutePath()}").use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute(
+                        """
+                        CREATE TABLE ping_tags (
+                            chat_id INTEGER NOT NULL,
+                            position INTEGER NOT NULL,
+                            username TEXT NOT NULL,
+                            PRIMARY KEY(chat_id, username)
+                        )
+                        """.trimIndent(),
+                    )
+                    statement.execute("INSERT INTO ping_tags (chat_id, position, username) VALUES (10, 0, 'Alice')")
+                    statement.execute("INSERT INTO ping_tags (chat_id, position, username) VALUES (10, 1, 'Bob')")
+                }
+            }
+
+            MemberRepository(dbPath).use { repository ->
+                assertEquals(
+                    listOf(
+                        PingTagTarget(
+                            identityKey = "n:alice",
+                            userId = null,
+                            username = "alice",
+                            displayNameSnapshot = "@alice",
+                        ),
+                        PingTagTarget(
+                            identityKey = "n:bob",
+                            userId = null,
+                            username = "bob",
+                            displayNameSnapshot = "@bob",
+                        ),
+                    ),
+                    repository.listPingTargets(10L),
+                )
             }
         } finally {
             assertTrue(dbPath.deleteIfExists())

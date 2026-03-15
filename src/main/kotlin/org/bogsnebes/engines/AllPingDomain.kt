@@ -50,7 +50,10 @@ data class AllPingSessionMessage(
 )
 
 data class AllPingParticipant(
-    val username: String,
+    val identityKey: String,
+    val userId: Long? = null,
+    val username: String? = null,
+    val displayNameSnapshot: String,
     val position: Int,
     val chunkIndex: Int,
     val response: AllPingResponse?,

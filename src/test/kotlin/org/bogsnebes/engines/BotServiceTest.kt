@@ -234,6 +234,58 @@ class BotServiceTest {
     }
 
     @Test
+    fun `updates participant response from callback matched by user id`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-callback-user-id", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway()
+                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                repository.replacePingTargets(
+                    -100L,
+                    listOf(
+                        PingTagTarget(
+                            identityKey = "u:77",
+                            userId = 77L,
+                            username = null,
+                            displayNameSnapshot = "Sim",
+                        ),
+                    ),
+                )
+                service.handle(allCommandUpdate())
+
+                val callbackData = gateway.sentMessages.single().inlineKeyboard
+                    ?.rows
+                    ?.single()
+                    ?.first()
+                    ?.callbackData
+                    ?: error("callback data missing")
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 2L,
+                        callbackQuery = callbackQuery(
+                            id = "callback-1",
+                            userId = 77L,
+                            username = null,
+                            firstName = "Sim",
+                            data = callbackData,
+                        ),
+                    ),
+                )
+
+                assertEquals(1, gateway.editedMessages.size)
+                assertTrue(gateway.editedMessages.single().text.contains("<a href=\"tg://user?id=77\">Sim</a> - пойдет"))
+                assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `applies cooldown to repeated command and updates notice until expiry`() = runTest {
         val dbPath = Files.createTempFile("bot-service-cooldown", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
@@ -453,6 +505,59 @@ class BotServiceTest {
     }
 
     @Test
+    fun `allows admin to replace ping tags with text mention target`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-add-text-mention", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway().apply {
+                    adminUsers += -100L to 1L
+                }
+                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 9L,
+                        message = TelegramMessage(
+                            messageId = 14L,
+                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
+                            chat = TelegramChat(id = -100L, type = "supergroup"),
+                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
+                            text = "/add Sim",
+                            textSources = listOf(
+                                TelegramRegularTextSource("/add "),
+                                TelegramTextMentionTextSource(
+                                    user = TelegramUser(id = 77L, isBot = false, firstName = "Sim"),
+                                    source = "Sim",
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+
+                assertEquals(
+                    listOf(
+                        PingTagTarget(
+                            identityKey = "u:77",
+                            userId = 77L,
+                            username = null,
+                            displayNameSnapshot = "Sim",
+                        ),
+                    ),
+                    repository.listPingTargets(-100L),
+                )
+                assertEquals(
+                    "Список тегов обновлён: <a href=\"tg://user?id=77\">Sim</a>",
+                    gateway.sentMessages.single().text,
+                )
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `rejects add command from non admin`() = runTest {
         val dbPath = Files.createTempFile("bot-service-add-denied", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
@@ -562,9 +667,23 @@ class BotServiceTest {
         id: String,
         username: String,
         data: String,
+    ): TelegramCallbackQuery = callbackQuery(
+        id = id,
+        userId = 100L + username.length,
+        username = username,
+        firstName = username,
+        data = data,
+    )
+
+    private fun callbackQuery(
+        id: String,
+        userId: Long,
+        username: String?,
+        firstName: String,
+        data: String,
     ): TelegramCallbackQuery = TelegramCallbackQuery(
         id = id,
-        from = TelegramUser(id = 100L + username.length, isBot = false, firstName = username, username = username),
+        from = TelegramUser(id = userId, isBot = false, firstName = firstName, username = username),
         data = data,
         chat = TelegramChat(id = -100L, type = "supergroup"),
         messageId = 1L,
