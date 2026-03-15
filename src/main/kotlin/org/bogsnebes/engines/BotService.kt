@@ -192,6 +192,7 @@ class BotService(
         val updatedSession = allPingSessionRepository.findSession(session.id)
             ?: error("All ping session ${session.id} disappeared after response update")
         editActiveSession(updatedSession)
+        syncCallbackSourceMessage(updatedSession, callbackQuery)
 
         val notice = if (participant.response == null) {
             "Ответ записан: ${decoded.response.statusText}"
@@ -238,5 +239,26 @@ class BotService(
                     inlineKeyboard = if (index == 0) keyboard else null,
                 )
             }
+    }
+
+    private suspend fun syncCallbackSourceMessage(session: AllPingSession, callbackQuery: TelegramCallbackQuery) {
+        val firstSavedMessage = session.messages.minByOrNull(AllPingSessionMessage::chunkIndex) ?: return
+        if (callbackQuery.chat.id != session.chatId || callbackQuery.messageId == firstSavedMessage.messageId) {
+            return
+        }
+
+        val firstChunkText = AllPingFormatter.buildMessageChunks(session).firstOrNull() ?: return
+        try {
+            telegramGateway.editMessageText(
+                chatId = callbackQuery.chat.id,
+                messageId = callbackQuery.messageId,
+                text = firstChunkText,
+                inlineKeyboard = AllPingFormatter.buildKeyboard(session.id),
+            )
+        } catch (error: Throwable) {
+            logger.warning(
+                "Failed to sync callback source message ${callbackQuery.messageId} for session ${session.id}: ${error.message}"
+            )
+        }
     }
 }

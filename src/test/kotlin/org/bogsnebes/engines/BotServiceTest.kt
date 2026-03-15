@@ -166,6 +166,48 @@ class BotServiceTest {
     }
 
     @Test
+    fun `updates reposted callback source message together with active session`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-callback-repost", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway()
+                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                repository.replacePingTags(-100L, listOf("alice", "bob"))
+                service.handle(allCommandUpdate())
+
+                val callbackData = gateway.sentMessages.single().inlineKeyboard
+                    ?.rows
+                    ?.single()
+                    ?.first()
+                    ?.callbackData
+                    ?: error("callback data missing")
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 2L,
+                        callbackQuery = callbackQuery(
+                            id = "callback-repost",
+                            username = "alice",
+                            data = callbackData,
+                            messageId = 999L,
+                        ),
+                    ),
+                )
+
+                assertEquals(2, gateway.editedMessages.size)
+                assertEquals(listOf(1L, 999L), gateway.editedMessages.map(EditedMessage::messageId))
+                assertTrue(gateway.editedMessages.all { it.text.contains("@alice - пойдет") })
+                assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `uses latest callback answer for the same user`() = runTest {
         val dbPath = Files.createTempFile("bot-service-callback-change", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
@@ -667,12 +709,14 @@ class BotServiceTest {
         id: String,
         username: String,
         data: String,
+        messageId: Long = 1L,
     ): TelegramCallbackQuery = callbackQuery(
         id = id,
         userId = 100L + username.length,
         username = username,
         firstName = username,
         data = data,
+        messageId = messageId,
     )
 
     private fun callbackQuery(
@@ -681,11 +725,12 @@ class BotServiceTest {
         username: String?,
         firstName: String,
         data: String,
+        messageId: Long = 1L,
     ): TelegramCallbackQuery = TelegramCallbackQuery(
         id = id,
         from = TelegramUser(id = userId, isBot = false, firstName = firstName, username = username),
         data = data,
         chat = TelegramChat(id = -100L, type = "supergroup"),
-        messageId = 1L,
+        messageId = messageId,
     )
 }
