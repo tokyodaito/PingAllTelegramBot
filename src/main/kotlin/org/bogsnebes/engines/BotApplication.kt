@@ -2,16 +2,13 @@ package org.bogsnebes.engines
 
 import dev.inmo.tgbotapi.bot.ktor.telegramBot
 import dev.inmo.tgbotapi.extensions.api.bot.getMe
-import dev.inmo.tgbotapi.extensions.utils.updates.retrieving.startGettingOfUpdatesByLongPolling
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import java.time.Clock
-import java.util.logging.Level
 import java.util.logging.Logger
 
 class BotApplication(
@@ -59,20 +56,24 @@ class BotApplication(
                         "Starting bot @${botUser.username ?: botUser.id} with database ${config.databasePath}"
                     )
 
-                    val pollingJob = bot.startGettingOfUpdatesByLongPolling(
-                        timeoutSeconds = config.pollTimeoutSeconds,
-                        scope = applicationScope,
-                        exceptionsHandler = { throwable: Throwable ->
-                            logger.log(Level.WARNING, "Polling failed, retrying in 5 seconds", throwable)
-                            delay(5_000L)
-                        },
-                        allowedUpdates = listOf("message", "chat_member"),
-                    ) { update ->
-                        TelegramUpdateMapper.map(update)?.let { botService.handle(it) }
-                    }
+                    val allowedUpdates = listOf("message", "chat_member")
+                    val pollingRunner = TelegramLongPollingRunner(
+                        updatesFetcher = TelegramGetUpdatesClient.fromHttpClient(
+                            client = client,
+                            botToken = config.botToken,
+                            pollTimeoutSeconds = config.pollTimeoutSeconds,
+                            allowedUpdates = allowedUpdates,
+                        ),
+                        logger = logger,
+                    )
 
-                    pollingJob.join()
-                    applicationScope.coroutineContext.cancelChildren()
+                    try {
+                        pollingRunner.run { update ->
+                            TelegramUpdateMapper.map(update)?.let { botService.handle(it) }
+                        }
+                    } finally {
+                        applicationScope.coroutineContext.cancelChildren()
+                    }
                 } finally {
                     repository.close()
                 }
