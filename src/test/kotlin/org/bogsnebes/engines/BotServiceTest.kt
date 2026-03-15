@@ -155,6 +155,110 @@ class BotServiceTest {
     }
 
     @Test
+    fun `treats duplicate callback response as idempotent`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-callback-duplicate", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway()
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice"), PingTagTarget.forUsername("bob")))
+                    service.handle(allCommandUpdate())
+
+                    val callbackData = gateway.sentMessages.single().inlineKeyboard
+                        ?.rows
+                        ?.single()
+                        ?.first()
+                        ?.callbackData
+                        ?: error("callback data missing")
+
+                    service.handle(
+                        TelegramUpdate(
+                            updateId = 2L,
+                            callbackQuery = callbackQuery(
+                                id = "callback-1",
+                                username = "alice",
+                                data = callbackData,
+                            ),
+                        ),
+                    )
+                    service.handle(
+                        TelegramUpdate(
+                            updateId = 3L,
+                            callbackQuery = callbackQuery(
+                                id = "callback-2",
+                                username = "alice",
+                                data = callbackData,
+                            ),
+                        ),
+                    )
+
+                    assertEquals(1, gateway.editedMessages.size)
+                    assertEquals(
+                        listOf("Ответ записан: пойдет ✅", "Ответ уже записан: пойдет ✅"),
+                        gateway.callbackAnswers.map(CallbackAnswer::text),
+                    )
+                    assertTrue(gateway.removedInlineKeyboards.isEmpty())
+                    assertEquals(AllPingSessionStatus.ACTIVE, sessionRepository.findSession(1L)?.status)
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `edits only changed chunk for multi message session callback`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-callback-multichunk", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway()
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                    repository.replaceTargets(
+                        -100L,
+                        (1..180).map { index -> PingTagTarget.forUsername("user$index") },
+                    )
+                    service.handle(allCommandUpdate())
+
+                    assertTrue(gateway.sentMessages.size > 1)
+
+                    val callbackData = gateway.sentMessages.first().inlineKeyboard
+                        ?.rows
+                        ?.single()
+                        ?.first()
+                        ?.callbackData
+                        ?: error("callback data missing")
+
+                    service.handle(
+                        TelegramUpdate(
+                            updateId = 2L,
+                            callbackQuery = callbackQuery(
+                                id = "callback-1",
+                                username = "user180",
+                                data = callbackData,
+                            ),
+                        ),
+                    )
+
+                    assertEquals(listOf(gateway.sentMessages.last().messageId), gateway.editedMessages.map(EditedMessage::messageId))
+                    assertEquals("Ответ записан: пойдет ✅", gateway.callbackAnswers.single().text)
+                    assertTrue(gateway.removedInlineKeyboards.isEmpty())
+                    assertEquals(AllPingSessionStatus.ACTIVE, sessionRepository.findSession(1L)?.status)
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `rejects callback from user outside configured tags`() = runTest {
         val dbPath = Files.createTempFile("bot-service-callback-reject", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))

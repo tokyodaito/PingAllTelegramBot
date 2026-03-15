@@ -180,6 +180,14 @@ class BotService(
             return
         }
 
+        if (participant.response == decoded.response) {
+            telegramGateway.answerCallbackQuery(
+                callbackQuery.id,
+                "Ответ уже записан: ${decoded.response.statusText}",
+            )
+            return
+        }
+
         allPingSessionRepository.updateResponse(
             sessionId = session.id,
             identityKey = participant.identityKey,
@@ -199,7 +207,7 @@ class BotService(
             return
         }
 
-        if (refreshSessionAfterResponse(updatedSession, callbackQuery)) {
+        if (refreshSessionAfterResponse(session, updatedSession, callbackQuery)) {
             telegramGateway.answerCallbackQuery(callbackQuery.id, notice)
         } else {
             telegramGateway.answerCallbackQuery(
@@ -270,11 +278,12 @@ class BotService(
     }
 
     private suspend fun refreshSessionAfterResponse(
+        previousSession: AllPingSession,
         session: AllPingSession,
         callbackQuery: TelegramCallbackQuery,
     ): Boolean {
         return try {
-            editActiveSession(session)
+            editActiveSession(previousSession, session)
             syncCallbackSourceMessage(session, callbackQuery)
             true
         } catch (error: Throwable) {
@@ -304,12 +313,19 @@ class BotService(
         allPingSessionRepository.closeSession(session.id, closedAt)
     }
 
-    private suspend fun editActiveSession(session: AllPingSession) {
+    private suspend fun editActiveSession(previousSession: AllPingSession, session: AllPingSession) {
         check(session.status == AllPingSessionStatus.ACTIVE) {
             "Cannot edit non-active session ${session.id}"
         }
+        check(previousSession.id == session.id) {
+            "Cannot diff sessions ${previousSession.id} and ${session.id}"
+        }
 
+        val previousMessages = AllPingFormatter.buildMessageChunks(previousSession)
         val messages = AllPingFormatter.buildMessageChunks(session)
+        check(previousMessages.size == messages.size) {
+            "Session ${session.id} rendered chunk count changed from ${previousMessages.size} to ${messages.size}"
+        }
         check(session.messages.size == messages.size) {
             "Session ${session.id} has ${session.messages.size} saved messages but ${messages.size} rendered chunks"
         }
@@ -318,6 +334,10 @@ class BotService(
         session.messages
             .sortedBy(AllPingSessionMessage::chunkIndex)
             .forEachIndexed { index, sentMessage ->
+                if (previousMessages[index] == messages[index]) {
+                    return@forEachIndexed
+                }
+
                 telegramGateway.editMessageText(
                     chatId = session.chatId,
                     messageId = sentMessage.messageId,
