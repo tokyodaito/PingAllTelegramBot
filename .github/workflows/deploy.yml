@@ -1,0 +1,79 @@
+name: Deploy BotPingAll
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: botpingall-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_ARCHIVE: build/distributions/BotPingAll-1.0-SNAPSHOT.tar
+      APP_NAME: botpingall
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'root' }}
+      REMOTE_DIR: /tmp/botpingall-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Validate deploy configuration
+        run: |
+          set -euo pipefail
+          test -n "${DEPLOY_HOST}" || { echo "DEPLOY_HOST repo variable is required"; exit 1; }
+          test -n "${DEPLOY_USER}" || { echo "DEPLOY_USER repo variable is required"; exit 1; }
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}" || { echo "DEPLOY_SSH_KEY secret is required"; exit 1; }
+
+      - name: Build release archive
+        run: ./gradlew --no-daemon test distTar
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Upload release bundle
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf '${REMOTE_DIR}' && mkdir -p '${REMOTE_DIR}'"
+          scp -i ~/.ssh/deploy_key -P "${DEPLOY_PORT}" \
+            "${APP_ARCHIVE}" \
+            scripts/deploy/bootstrap_server.sh \
+            scripts/deploy/deploy_release.sh \
+            scripts/deploy/botpingall.service \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_DIR}/"
+
+      - name: Bootstrap server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "chmod +x '${REMOTE_DIR}/bootstrap_server.sh' '${REMOTE_DIR}/deploy_release.sh' && '${REMOTE_DIR}/bootstrap_server.sh' '${REMOTE_DIR}/botpingall.service'"
+
+      - name: Deploy release
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "APP_ARCHIVE='${REMOTE_DIR}/$(basename "${APP_ARCHIVE}")' RELEASE_ID='${GITHUB_SHA}' KEEP_RELEASES='3' '${REMOTE_DIR}/deploy_release.sh'"
+
+      - name: Cleanup remote bundle
+        if: always()
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf '${REMOTE_DIR}'"
