@@ -50,6 +50,7 @@ class BotServiceTest {
                 assertTrue(sentMessage.text.contains("Подъем"))
                 assertTrue(sentMessage.text.contains("@alice - без ответа ⏳"))
                 assertTrue(sentMessage.text.contains("@bob - без ответа ⏳"))
+                assertTrue(sentMessage.text.contains("Согласились: 0/2"))
                 assertEquals(listOf("Да", "Нет", "Думаю"), sentMessage.inlineKeyboard?.rows?.single()?.map(TelegramInlineButton::text))
             }
         } finally {
@@ -145,6 +146,7 @@ class BotServiceTest {
 
                 assertEquals(1, gateway.editedMessages.size)
                 assertTrue(gateway.editedMessages.single().text.contains("@alice - пойдет ✅"))
+                assertTrue(gateway.editedMessages.single().text.contains("Согласились: 1/2"))
                 assertEquals("Ответ записан: пойдет ✅", gateway.callbackAnswers.single().text)
             }
         } finally {
@@ -236,6 +238,7 @@ class BotServiceTest {
 
                 assertEquals(1, gateway.editedMessages.size)
                 assertTrue(gateway.editedMessages.single().text.contains("<a href=\"tg://user?id=77\">Sim</a> - пойдет ✅"))
+                assertTrue(gateway.editedMessages.single().text.contains("Согласились: 1/1"))
                 assertEquals("Ответ записан: пойдет ✅", gateway.callbackAnswers.single().text)
             }
         } finally {

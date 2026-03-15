@@ -4,6 +4,7 @@ object AllPingFormatter {
     private const val maxMessageLength = 4_096
     private const val defaultTitle = "Сбор ответа"
     private const val noResponseText = "без ответа ⏳"
+    private const val agreedCounterLabel = "Согласились"
 
     fun buildKeyboard(sessionId: Long): TelegramInlineKeyboard = TelegramInlineKeyboard(
         rows = listOf(
@@ -19,6 +20,7 @@ object AllPingFormatter {
     fun prepareChunkIndexes(targets: List<PingTagTarget>, announcement: String?): List<Int> {
         val chunkIndexes = mutableListOf<Int>()
         val header = buildHeader(announcement)
+        val footerLength = buildCounterLine(agreedCount = targets.size, totalCount = targets.size).length + "\n\n".length
         var currentChunkIndex = 0
         var currentChunkLength = header.length
         var chunkHasLines = false
@@ -33,7 +35,7 @@ object AllPingFormatter {
                 else -> 0
             }
 
-            if (currentChunkLength + separatorLength + line.length > maxMessageLength) {
+            if (currentChunkLength + separatorLength + line.length + footerLength > maxMessageLength) {
                 currentChunkIndex += 1
                 currentChunkLength = 0
                 chunkHasLines = false
@@ -45,7 +47,12 @@ object AllPingFormatter {
                 else -> 0
             }
 
-            currentChunkLength += normalizedSeparatorLength + line.length
+            val nextChunkLength = currentChunkLength + normalizedSeparatorLength + line.length
+            if (nextChunkLength + footerLength > maxMessageLength) {
+                throw AllPingFormattingException("Participant line exceeds Telegram message limit with counter footer")
+            }
+
+            currentChunkLength = nextChunkLength
             chunkHasLines = true
             chunkIndexes += currentChunkIndex
         }
@@ -85,6 +92,18 @@ object AllPingFormatter {
                 builder.append(line)
             }
 
+            if (chunkIndex == lastChunkIndex) {
+                if (builder.isNotEmpty()) {
+                    builder.append("\n\n")
+                }
+                builder.append(
+                    buildCounterLine(
+                        agreedCount = session.participants.count { it.response == AllPingResponse.YES },
+                        totalCount = session.participants.size,
+                    ),
+                )
+            }
+
             builder.toString()
         }
 
@@ -114,6 +133,8 @@ object AllPingFormatter {
         val status = response?.statusText ?: noResponseText
         return "${MentionFormatter.renderTarget(userId, username, displayNameSnapshot)} - $status"
     }
+
+    private fun buildCounterLine(agreedCount: Int, totalCount: Int): String = "$agreedCounterLabel: $agreedCount/$totalCount"
 
     private fun validateLineLength(line: String) {
         if (line.length > maxMessageLength) {
