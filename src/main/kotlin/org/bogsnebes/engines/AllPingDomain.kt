@@ -14,17 +14,17 @@ enum class AllPingResponse(
     YES(
         callbackCode = "yes",
         buttonText = "Да",
-        statusText = "пойдет",
+        statusText = "пойдет ✅",
     ),
     NO(
         callbackCode = "no",
         buttonText = "Нет",
-        statusText = "не идет",
+        statusText = "не идет ❌",
     ),
     THINK(
         callbackCode = "think",
         buttonText = "Думаю",
-        statusText = "думает",
+        statusText = "думает 🤔",
     ),
     ;
 

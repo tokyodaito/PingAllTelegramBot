@@ -3,7 +3,7 @@ package org.bogsnebes.engines
 object AllPingFormatter {
     private const val maxMessageLength = 4_096
     private const val defaultTitle = "Сбор ответа"
-    private const val noResponseText = "без ответа"
+    private const val noResponseText = "без ответа ⏳"
 
     fun buildKeyboard(sessionId: Long): TelegramInlineKeyboard = TelegramInlineKeyboard(
         rows = listOf(

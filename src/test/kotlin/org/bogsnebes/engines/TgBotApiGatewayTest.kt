@@ -141,13 +141,13 @@ class TgBotApiGatewayTest {
 
         gateway.answerCallbackQuery(
             callbackQueryId = "callback-1",
-            text = "Ответ записан: пойдет",
+            text = "Ответ записан: пойдет ✅",
         )
 
         val request = assertIs<AnswerCallbackQuery>(executor.requests.single())
 
         assertEquals("callback-1", request.callbackQueryId.string)
-        assertEquals("Ответ записан: пойдет", request.text)
+        assertEquals("Ответ записан: пойдет ✅", request.text)
     }
 
     @Test

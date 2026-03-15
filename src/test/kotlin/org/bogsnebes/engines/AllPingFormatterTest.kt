@@ -45,8 +45,8 @@ class AllPingFormatterTest {
             Сбор ответа
             Подъем
 
-            @alice - без ответа
-            @bob - думает
+            @alice - без ответа ⏳
+            @bob - думает 🤔
             """.trimIndent(),
             messages.single(),
         )
@@ -89,7 +89,7 @@ class AllPingFormatterTest {
 
         val messages = AllPingFormatter.buildMessageChunks(session)
 
-        assertEquals("Сбор ответа\n\n<a href=\"tg://user?id=77\">Sim</a> - без ответа", messages.single())
+        assertEquals("Сбор ответа\n\n<a href=\"tg://user?id=77\">Sim</a> - без ответа ⏳", messages.single())
     }
 
     @Test
@@ -128,6 +128,6 @@ class AllPingFormatterTest {
         assertEquals(2, messages.size)
         assertTrue(messages.all { it.length <= 4_096 })
         assertEquals("Сбор ответа\n${"A".repeat(4_081)}...", messages.first())
-        assertEquals("@alice - без ответа", messages.last())
+        assertEquals("@alice - без ответа ⏳", messages.last())
     }
 }

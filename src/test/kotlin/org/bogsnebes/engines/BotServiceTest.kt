@@ -48,8 +48,8 @@ class BotServiceTest {
                 assertEquals(42L, sentMessage.messageThreadId)
                 assertTrue(sentMessage.text.contains("Сбор ответа"))
                 assertTrue(sentMessage.text.contains("Подъем"))
-                assertTrue(sentMessage.text.contains("@alice - без ответа"))
-                assertTrue(sentMessage.text.contains("@bob - без ответа"))
+                assertTrue(sentMessage.text.contains("@alice - без ответа ⏳"))
+                assertTrue(sentMessage.text.contains("@bob - без ответа ⏳"))
                 assertEquals(listOf("Да", "Нет", "Думаю"), sentMessage.inlineKeyboard?.rows?.single()?.map(TelegramInlineButton::text))
             }
         } finally {
@@ -144,8 +144,8 @@ class BotServiceTest {
                 )
 
                 assertEquals(1, gateway.editedMessages.size)
-                assertTrue(gateway.editedMessages.single().text.contains("@alice - пойдет"))
-                assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
+                assertTrue(gateway.editedMessages.single().text.contains("@alice - пойдет ✅"))
+                assertEquals("Ответ записан: пойдет ✅", gateway.callbackAnswers.single().text)
             }
         } finally {
             dbPath.deleteIfExists()
@@ -235,8 +235,8 @@ class BotServiceTest {
                 )
 
                 assertEquals(1, gateway.editedMessages.size)
-                assertTrue(gateway.editedMessages.single().text.contains("<a href=\"tg://user?id=77\">Sim</a> - пойдет"))
-                assertEquals("Ответ записан: пойдет", gateway.callbackAnswers.single().text)
+                assertTrue(gateway.editedMessages.single().text.contains("<a href=\"tg://user?id=77\">Sim</a> - пойдет ✅"))
+                assertEquals("Ответ записан: пойдет ✅", gateway.callbackAnswers.single().text)
             }
         } finally {
             dbPath.deleteIfExists()
