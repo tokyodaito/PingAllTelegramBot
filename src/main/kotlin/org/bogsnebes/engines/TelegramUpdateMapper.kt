@@ -19,6 +19,9 @@ import dev.inmo.tgbotapi.types.message.abstracts.GroupEventMessage
 import dev.inmo.tgbotapi.types.message.abstracts.OptionallyFromUserMessage
 import dev.inmo.tgbotapi.types.message.abstracts.PossiblyTopicMessage
 import dev.inmo.tgbotapi.types.message.content.TextedContent
+import dev.inmo.tgbotapi.types.queries.callback.DataCallbackQuery
+import dev.inmo.tgbotapi.types.queries.callback.MessageCallbackQuery
+import dev.inmo.tgbotapi.types.update.CallbackQueryUpdate
 import dev.inmo.tgbotapi.types.update.abstracts.BaseMessageUpdate
 import dev.inmo.tgbotapi.types.update.abstracts.ChatMemberUpdatedUpdate
 import dev.inmo.tgbotapi.types.update.abstracts.Update
@@ -34,6 +37,15 @@ object TelegramUpdateMapper {
             updateId = update.updateId.long,
             chatMember = mapChatMemberUpdated(update.data),
         )
+
+        is CallbackQueryUpdate -> (update.data as? DataCallbackQuery)
+            ?.let(::mapCallbackQuery)
+            ?.let { callbackQuery ->
+                TelegramUpdate(
+                    updateId = update.updateId.long,
+                    callbackQuery = callbackQuery,
+                )
+            }
 
         else -> null
     }
@@ -68,6 +80,21 @@ object TelegramUpdateMapper {
         oldChatMember = update.oldChatMemberState.toTelegramChatMember(),
         newChatMember = update.newChatMemberState.toTelegramChatMember(),
     )
+
+    private fun mapCallbackQuery(query: DataCallbackQuery): TelegramCallbackQuery? {
+        val messageQuery = query as? MessageCallbackQuery ?: return null
+        val message = messageQuery.message
+
+        return TelegramCallbackQuery(
+            id = query.id.string,
+            from = query.from.toTelegramUser(),
+            data = query.data,
+            chat = message.chat.toTelegramChat(),
+            messageId = message.messageId.long,
+            messageThreadId = (message as? PossiblyTopicMessage)?.threadId?.long
+                ?: message.metaInfo.threadId?.long,
+        )
+    }
 }
 
 internal fun User.toTelegramUser(): TelegramUser = TelegramUser(

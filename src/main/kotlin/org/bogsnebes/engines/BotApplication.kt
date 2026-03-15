@@ -34,6 +34,7 @@ class BotApplication(
 
             try {
                 val repository = MemberRepository(config.databasePath)
+                val allPingSessionRepository = AllPingSessionRepository(config.databasePath)
                 try {
                     val botUser = bot.getMe().toTelegramUser()
                     val applicationScope = CoroutineScope(currentCoroutineContext())
@@ -47,6 +48,7 @@ class BotApplication(
                             clock = clock,
                         ),
                         memberRepository = repository,
+                        allPingSessionRepository = allPingSessionRepository,
                         cooldownTracker = PingCooldownTracker(config.cooldown),
                         activeWindow = config.activeWindow,
                         clock = clock,
@@ -56,7 +58,7 @@ class BotApplication(
                         "Starting bot @${botUser.username ?: botUser.id} with database ${config.databasePath}"
                     )
 
-                    val allowedUpdates = listOf("message", "chat_member")
+                    val allowedUpdates = listOf("message", "chat_member", "callback_query")
                     val pollingRunner = TelegramLongPollingRunner(
                         updatesFetcher = TelegramGetUpdatesClient.fromHttpClient(
                             client = client,
@@ -75,6 +77,7 @@ class BotApplication(
                         applicationScope.coroutineContext.cancelChildren()
                     }
                 } finally {
+                    allPingSessionRepository.close()
                     repository.close()
                 }
             } finally {

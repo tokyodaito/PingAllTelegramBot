@@ -4,6 +4,7 @@ data class TelegramUpdate(
     val updateId: Long,
     val message: TelegramMessage? = null,
     val chatMember: TelegramChatMemberUpdated? = null,
+    val callbackQuery: TelegramCallbackQuery? = null,
 )
 
 data class TelegramMessage(
@@ -18,6 +19,15 @@ data class TelegramMessage(
 
 data class TelegramSentMessage(
     val chatId: Long,
+    val messageId: Long,
+    val messageThreadId: Long? = null,
+)
+
+data class TelegramCallbackQuery(
+    val id: String,
+    val from: TelegramUser,
+    val data: String,
+    val chat: TelegramChat,
     val messageId: Long,
     val messageThreadId: Long? = null,
 )
@@ -46,4 +56,13 @@ data class TelegramChatMemberUpdated(
 data class TelegramChatMember(
     val user: TelegramUser,
     val status: String,
+)
+
+data class TelegramInlineKeyboard(
+    val rows: List<List<TelegramInlineButton>>,
+)
+
+data class TelegramInlineButton(
+    val text: String,
+    val callbackData: String,
 )

@@ -23,15 +23,23 @@ class FakeTelegramGateway : TelegramGateway {
     val sentMessages = mutableListOf<SentMessage>()
     val editedMessages = mutableListOf<EditedMessage>()
     val deletedMessages = mutableListOf<DeletedMessage>()
+    val callbackAnswers = mutableListOf<CallbackAnswer>()
+    val removedInlineKeyboards = mutableListOf<RemovedInlineKeyboard>()
     val adminUsers = mutableSetOf<Pair<Long, Long>>()
     private var nextMessageId = 1L
 
-    override suspend fun sendMessage(chatId: Long, text: String, messageThreadId: Long?): TelegramSentMessage {
+    override suspend fun sendMessage(
+        chatId: Long,
+        text: String,
+        messageThreadId: Long?,
+        inlineKeyboard: TelegramInlineKeyboard?,
+    ): TelegramSentMessage {
         val sentMessage = SentMessage(
             chatId = chatId,
             messageId = nextMessageId++,
             text = text,
             messageThreadId = messageThreadId,
+            inlineKeyboard = inlineKeyboard,
         )
         sentMessages += sentMessage
         return TelegramSentMessage(
@@ -41,12 +49,25 @@ class FakeTelegramGateway : TelegramGateway {
         )
     }
 
-    override suspend fun editMessageText(chatId: Long, messageId: Long, text: String) {
-        editedMessages += EditedMessage(chatId, messageId, text)
+    override suspend fun editMessageText(
+        chatId: Long,
+        messageId: Long,
+        text: String,
+        inlineKeyboard: TelegramInlineKeyboard?,
+    ) {
+        editedMessages += EditedMessage(chatId, messageId, text, inlineKeyboard)
+    }
+
+    override suspend fun removeInlineKeyboard(chatId: Long, messageId: Long) {
+        removedInlineKeyboards += RemovedInlineKeyboard(chatId, messageId)
     }
 
     override suspend fun deleteMessage(chatId: Long, messageId: Long) {
         deletedMessages += DeletedMessage(chatId, messageId)
+    }
+
+    override suspend fun answerCallbackQuery(callbackQueryId: String, text: String) {
+        callbackAnswers += CallbackAnswer(callbackQueryId, text)
     }
 
     override suspend fun isChatAdmin(chatId: Long, userId: Long): Boolean = (chatId to userId) in adminUsers
@@ -57,17 +78,29 @@ data class SentMessage(
     val messageId: Long,
     val text: String,
     val messageThreadId: Long?,
+    val inlineKeyboard: TelegramInlineKeyboard?,
 )
 
 data class EditedMessage(
     val chatId: Long,
     val messageId: Long,
     val text: String,
+    val inlineKeyboard: TelegramInlineKeyboard?,
 )
 
 data class DeletedMessage(
     val chatId: Long,
     val messageId: Long,
+)
+
+data class RemovedInlineKeyboard(
+    val chatId: Long,
+    val messageId: Long,
+)
+
+data class CallbackAnswer(
+    val callbackQueryId: String,
+    val text: String,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)

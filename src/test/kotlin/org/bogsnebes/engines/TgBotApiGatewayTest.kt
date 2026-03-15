@@ -1,11 +1,14 @@
 package org.bogsnebes.engines
 
 import dev.inmo.tgbotapi.requests.DeleteMessage
+import dev.inmo.tgbotapi.requests.answers.AnswerCallbackQuery
 import dev.inmo.tgbotapi.requests.chat.members.GetChatMember
+import dev.inmo.tgbotapi.requests.edit.reply_markup.EditChatMessageReplyMarkup
 import dev.inmo.tgbotapi.requests.edit.text.EditChatMessageText
 import dev.inmo.tgbotapi.requests.send.SendTextMessage
 import dev.inmo.tgbotapi.types.IdChatIdentifier
 import dev.inmo.tgbotapi.types.LinkPreviewOptions
+import dev.inmo.tgbotapi.types.buttons.InlineKeyboardMarkup
 import dev.inmo.tgbotapi.types.message.HTML
 import dev.inmo.tgbotapi.types.message.abstracts.ContentMessage
 import dev.inmo.tgbotapi.types.message.content.TextContent
@@ -29,16 +32,26 @@ class TgBotApiGatewayTest {
             chatId = -200L,
             text = """<a href="tg://user?id=1">User</a>""",
             messageThreadId = 77L,
+            inlineKeyboard = TelegramInlineKeyboard(
+                rows = listOf(
+                    listOf(
+                        TelegramInlineButton("Да", "all:1:yes"),
+                        TelegramInlineButton("Нет", "all:1:no"),
+                    ),
+                ),
+            ),
         )
 
         val request = assertIs<SendTextMessage>(executor.requests.single())
         val chatId = assertIs<IdChatIdentifier>(request.chatId)
+        val replyMarkup = assertIs<InlineKeyboardMarkup>(request.replyMarkup)
 
         assertEquals(-200L, chatId.chatId.long)
         assertEquals("""<a href="tg://user?id=1">User</a>""", request.text)
         assertEquals(77L, request.threadId?.long)
         assertEquals(HTML, request.parseMode)
         assertEquals(LinkPreviewOptions.Disabled, request.linkPreviewOptions)
+        assertEquals(listOf("Да", "Нет"), replyMarkup.keyboard.single().map { it.text })
         assertEquals(-200L, sentMessage.chatId)
         assertEquals(99L, sentMessage.messageId)
         assertEquals(77L, sentMessage.messageThreadId)
@@ -57,16 +70,43 @@ class TgBotApiGatewayTest {
             chatId = -200L,
             messageId = 99L,
             text = "Updated",
+            inlineKeyboard = TelegramInlineKeyboard(
+                rows = listOf(listOf(TelegramInlineButton("Думаю", "all:1:think"))),
+            ),
         )
 
         val request = assertIs<EditChatMessageText>(executor.requests.single())
         val chatId = assertIs<IdChatIdentifier>(request.chatId)
+        val replyMarkup = assertIs<InlineKeyboardMarkup>(request.replyMarkup)
 
         assertEquals(-200L, chatId.chatId.long)
         assertEquals(99L, request.messageId.long)
         assertEquals("Updated", request.text)
         assertEquals(HTML, request.parseMode)
         assertEquals(LinkPreviewOptions.Disabled, request.linkPreviewOptions)
+        assertEquals("Думаю", replyMarkup.keyboard.single().single().text)
+    }
+
+    @Test
+    fun `removes inline keyboard from chat message`() = runBlocking {
+        val executor = RecordingRequestsExecutor(
+            responses = mapOf(
+                "editMessageReplyMarkup" to sampleSentTextMessage(),
+            ),
+        )
+        val gateway = TgBotApiGateway(executor)
+
+        gateway.removeInlineKeyboard(
+            chatId = -200L,
+            messageId = 99L,
+        )
+
+        val request = assertIs<EditChatMessageReplyMarkup>(executor.requests.single())
+        val chatId = assertIs<IdChatIdentifier>(request.chatId)
+
+        assertEquals(-200L, chatId.chatId.long)
+        assertEquals(99L, request.messageId.long)
+        assertEquals(null, request.replyMarkup)
     }
 
     @Test
@@ -88,6 +128,26 @@ class TgBotApiGatewayTest {
 
         assertEquals(-200L, chatId.chatId.long)
         assertEquals(99L, request.messageId.long)
+    }
+
+    @Test
+    fun `answers callback query`() = runBlocking {
+        val executor = RecordingRequestsExecutor(
+            responses = mapOf(
+                "answerCallbackQuery" to Unit,
+            ),
+        )
+        val gateway = TgBotApiGateway(executor)
+
+        gateway.answerCallbackQuery(
+            callbackQueryId = "callback-1",
+            text = "Ответ записан: пойдет",
+        )
+
+        val request = assertIs<AnswerCallbackQuery>(executor.requests.single())
+
+        assertEquals("callback-1", request.callbackQueryId.string)
+        assertEquals("Ответ записан: пойдет", request.text)
     }
 
     @Test

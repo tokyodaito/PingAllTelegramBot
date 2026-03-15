@@ -9,6 +9,7 @@ import kotlin.io.path.deleteIfExists
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TelegramUpdateMapperTest {
@@ -62,6 +63,60 @@ class TelegramUpdateMapperTest {
     }
 
     @Test
+    fun `maps callback query update from message button`() {
+        val update = assertNotNull(
+            TelegramUpdateMapper.map(
+                decodeLibraryUpdate(
+                    """
+                    {
+                      "update_id": 1004,
+                      "callback_query": {
+                        "id": "callback-1",
+                        "from": {
+                          "id": 10,
+                          "is_bot": false,
+                          "first_name": "Owner",
+                          "username": "owner"
+                        },
+                        "chat_instance": "chat-instance",
+                        "message": {
+                          "message_id": 11,
+                          "message_thread_id": 77,
+                          "is_topic_message": true,
+                          "date": 1773489720,
+                          "chat": {
+                            "id": -200,
+                            "type": "supergroup",
+                            "title": "Team"
+                          },
+                          "from": {
+                            "id": 99,
+                            "is_bot": true,
+                            "first_name": "PingAll",
+                            "username": "pingallbot"
+                          },
+                          "text": "Сбор ответа"
+                        },
+                        "data": "all:1:yes"
+                      }
+                    }
+                    """,
+                ),
+            ),
+        )
+
+        val callbackQuery = assertNotNull(update.callbackQuery)
+        assertEquals(1004L, update.updateId)
+        assertEquals("callback-1", callbackQuery.id)
+        assertEquals("owner", callbackQuery.from.username)
+        assertEquals("all:1:yes", callbackQuery.data)
+        assertEquals(-200L, callbackQuery.chat.id)
+        assertEquals(11L, callbackQuery.messageId)
+        assertNull(callbackQuery.messageThreadId)
+        assertNull(update.message)
+    }
+
+    @Test
     fun `maps chat member updates and dispatches mapped command to bot service`() = runTest {
         val dbPath = Files.createTempFile("dispatch", ".db")
 
@@ -77,6 +132,7 @@ class TelegramUpdateMapperTest {
                         clock = Clock.fixed(Instant.parse("2026-03-14T12:00:00Z"), ZoneOffset.UTC),
                     ),
                     memberRepository = repository,
+                    allPingSessionRepository = AllPingSessionRepository(dbPath),
                     cooldownTracker = PingCooldownTracker(java.time.Duration.ofMinutes(10)),
                     activeWindow = java.time.Duration.ofDays(7),
                     clock = Clock.fixed(Instant.parse("2026-03-14T12:00:00Z"), ZoneOffset.UTC),
