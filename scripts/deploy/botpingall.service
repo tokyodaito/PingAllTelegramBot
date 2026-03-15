@@ -1,0 +1,36 @@
+[Unit]
+Description=BotPingAll Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botpingall
+Group=botpingall
+WorkingDirectory=/opt/botpingall/current
+EnvironmentFile=/etc/botpingall/env
+ExecStart=/opt/botpingall/current/bin/BotPingAll
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+ReadWritePaths=/opt/botpingall/shared
+Environment="JAVA_TOOL_OPTIONS=-Djava.awt.headless=true -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=30"
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
