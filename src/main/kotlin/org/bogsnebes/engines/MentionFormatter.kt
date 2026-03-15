@@ -5,7 +5,36 @@ object MentionFormatter {
     private const val maxMessageLength = 4_096
 
     fun buildMessages(members: List<KnownMember>, announcement: String?): List<String> {
-        val mentions = members.map(::toMention)
+        return buildMessageChunks(
+            mentions = members.map(::toMention),
+            announcement = announcement,
+        )
+    }
+
+    fun buildTagMessages(usernames: List<String>, announcement: String?): List<String> {
+        return buildMessageChunks(
+            mentions = usernames.map { "@$it" },
+            announcement = announcement,
+        )
+    }
+
+    fun escapeHtml(value: String): String = buildString(value.length) {
+        value.forEach { character ->
+            when (character) {
+                '&' -> append("&amp;")
+                '<' -> append("&lt;")
+                '>' -> append("&gt;")
+                '"' -> append("&quot;")
+                else -> append(character)
+            }
+        }
+    }
+
+    private fun toMention(member: KnownMember): String {
+        return """<a href="tg://user?id=${member.userId}">${escapeHtml(member.displayNameSnapshot)}</a>"""
+    }
+
+    private fun buildMessageChunks(mentions: List<String>, announcement: String?): List<String> {
         val header = announcement
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
@@ -52,22 +81,6 @@ object MentionFormatter {
         }
 
         return messages
-    }
-
-    fun escapeHtml(value: String): String = buildString(value.length) {
-        value.forEach { character ->
-            when (character) {
-                '&' -> append("&amp;")
-                '<' -> append("&lt;")
-                '>' -> append("&gt;")
-                '"' -> append("&quot;")
-                else -> append(character)
-            }
-        }
-    }
-
-    private fun toMention(member: KnownMember): String {
-        return """<a href="tg://user?id=${member.userId}">${escapeHtml(member.displayNameSnapshot)}</a>"""
     }
 
     private fun truncateToLimit(value: String): String {

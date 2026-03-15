@@ -196,6 +196,7 @@ class TelegramUpdateMapperTest {
 
                 service.handle(newMembersUpdate)
                 service.handle(memberUpdate)
+                repository.replacePingTags(-200L, listOf("new_user"))
                 service.handle(commandUpdate)
 
                 val members = repository.listMentionableMembers(
@@ -208,7 +209,7 @@ class TelegramUpdateMapperTest {
                 assertEquals(1, gateway.sentMessages.size)
                 assertEquals(77L, gateway.sentMessages.single().messageThreadId)
                 assertTrue(gateway.sentMessages.single().text.contains("Wake up"))
-                assertTrue(gateway.sentMessages.single().text.contains("tg://user?id=11"))
+                assertTrue(gateway.sentMessages.single().text.contains("@new_user"))
             }
         } finally {
             dbPath.deleteIfExists()

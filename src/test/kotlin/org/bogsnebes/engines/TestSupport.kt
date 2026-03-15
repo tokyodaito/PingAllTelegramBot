@@ -2,6 +2,8 @@ package org.bogsnebes.engines
 
 import dev.inmo.tgbotapi.bot.RequestsExecutor
 import dev.inmo.tgbotapi.requests.abstracts.Request
+import dev.inmo.tgbotapi.types.chat.member.ChatMember
+import dev.inmo.tgbotapi.types.chat.member.ChatMemberSerializer
 import dev.inmo.tgbotapi.types.update.abstracts.Update
 import dev.inmo.tgbotapi.types.update.abstracts.UpdateDeserializationStrategy
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -21,6 +23,7 @@ class FakeTelegramGateway : TelegramGateway {
     val sentMessages = mutableListOf<SentMessage>()
     val editedMessages = mutableListOf<EditedMessage>()
     val deletedMessages = mutableListOf<DeletedMessage>()
+    val adminUsers = mutableSetOf<Pair<Long, Long>>()
     private var nextMessageId = 1L
 
     override suspend fun sendMessage(chatId: Long, text: String, messageThreadId: Long?): TelegramSentMessage {
@@ -45,6 +48,8 @@ class FakeTelegramGateway : TelegramGateway {
     override suspend fun deleteMessage(chatId: Long, messageId: Long) {
         deletedMessages += DeletedMessage(chatId, messageId)
     }
+
+    override suspend fun isChatAdmin(chatId: Long, userId: Long): Boolean = (chatId to userId) in adminUsers
 }
 
 data class SentMessage(
@@ -84,6 +89,11 @@ class SchedulerClock(
 
 fun decodeLibraryUpdate(payload: String): Update = libraryJson.decodeFromString(
     UpdateDeserializationStrategy,
+    payload.trimIndent(),
+)
+
+fun decodeChatMember(payload: String): ChatMember = libraryJson.decodeFromString(
+    ChatMemberSerializer,
     payload.trimIndent(),
 )
 

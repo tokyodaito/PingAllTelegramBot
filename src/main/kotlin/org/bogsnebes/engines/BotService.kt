@@ -22,15 +22,23 @@ class BotService(
     }
 
     private suspend fun handleMessage(message: TelegramMessage) {
-        val command = message.text?.let { CommandParser.parseAllCommand(it, botUser.username) }
+        val command = message.text?.let { CommandParser.parse(it, botUser.username) }
 
         if (!message.chat.isGroupLike()) {
-            if (command != null) {
-                telegramGateway.sendMessage(
+            when (command) {
+                is AllCommand -> telegramGateway.sendMessage(
                     chatId = message.chat.id,
                     text = "Команда /all работает только в группах и супергруппах.",
                     messageThreadId = message.messageThreadId,
                 )
+
+                is AddCommand, InvalidAddCommand -> telegramGateway.sendMessage(
+                    chatId = message.chat.id,
+                    text = "Команда /add работает только в группах и супергруппах.",
+                    messageThreadId = message.messageThreadId,
+                )
+
+                null -> Unit
             }
             return
         }
@@ -55,19 +63,24 @@ class BotService(
             )
         }
 
-        if (command == null || message.from == null || message.from.isBot) {
+        val sender = message.from ?: return
+        if (command == null || sender.isBot) {
             return
         }
 
-        val eligibleMembers = memberRepository.listMentionableMembers(
-            chatId = message.chat.id,
-            activeSince = Instant.now(clock).minus(activeWindow),
-        ).filterNot { it.userId == botUser.id }
+        when (command) {
+            is AllCommand -> handleAllCommand(message, command)
+            is AddCommand -> handleAddCommand(message, sender.id, command)
+            InvalidAddCommand -> handleInvalidAddCommand(message, sender.id)
+        }
+    }
 
-        if (eligibleMembers.isEmpty()) {
+    private suspend fun handleAllCommand(message: TelegramMessage, command: AllCommand) {
+        val usernames = memberRepository.listPingTags(message.chat.id)
+        if (usernames.isEmpty()) {
             telegramGateway.sendMessage(
                 chatId = message.chat.id,
-                text = "Бот пока не знает активных участников этого чата за последние 7 дней.",
+                text = "Список тегов не настроен. Используйте /add @username...",
                 messageThreadId = message.messageThreadId,
             )
             return
@@ -85,7 +98,7 @@ class BotService(
             return
         }
 
-        val messages = MentionFormatter.buildMessages(eligibleMembers, command.announcement)
+        val messages = MentionFormatter.buildTagMessages(usernames, command.announcement)
         messages.forEach { payload ->
             telegramGateway.sendMessage(
                 chatId = message.chat.id,
@@ -95,7 +108,42 @@ class BotService(
         }
 
         logger.info(
-            "Sent ${eligibleMembers.size} mentions across ${messages.size} messages for chat ${message.chat.id}"
+            "Sent ${usernames.size} ping tags across ${messages.size} messages for chat ${message.chat.id}"
+        )
+    }
+
+    private suspend fun handleAddCommand(message: TelegramMessage, senderId: Long, command: AddCommand) {
+        if (!telegramGateway.isChatAdmin(message.chat.id, senderId)) {
+            telegramGateway.sendMessage(
+                chatId = message.chat.id,
+                text = "Команда /add доступна только администраторам чата.",
+                messageThreadId = message.messageThreadId,
+            )
+            return
+        }
+
+        memberRepository.replacePingTags(message.chat.id, command.usernames)
+        telegramGateway.sendMessage(
+            chatId = message.chat.id,
+            text = "Список тегов обновлён: ${command.usernames.joinToString(" ") { "@$it" }}",
+            messageThreadId = message.messageThreadId,
+        )
+    }
+
+    private suspend fun handleInvalidAddCommand(message: TelegramMessage, senderId: Long) {
+        if (!telegramGateway.isChatAdmin(message.chat.id, senderId)) {
+            telegramGateway.sendMessage(
+                chatId = message.chat.id,
+                text = "Команда /add доступна только администраторам чата.",
+                messageThreadId = message.messageThreadId,
+            )
+            return
+        }
+
+        telegramGateway.sendMessage(
+            chatId = message.chat.id,
+            text = "Использование: /add @username1 @username2",
+            messageThreadId = message.messageThreadId,
         )
     }
 

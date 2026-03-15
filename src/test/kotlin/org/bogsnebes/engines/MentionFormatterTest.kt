@@ -27,6 +27,17 @@ class MentionFormatterTest {
         assertEquals(3, messages.size)
     }
 
+    @Test
+    fun `builds username tag messages with announcement`() {
+        val messages = MentionFormatter.buildTagMessages(
+            usernames = listOf("alice", "bob"),
+            announcement = "Всем сюда",
+        )
+
+        assertEquals(1, messages.size)
+        assertEquals("Всем сюда\n\n@alice @bob", messages.single())
+    }
+
     private fun knownMember(id: Long): KnownMember = KnownMember(
         chatId = 1L,
         userId = id,

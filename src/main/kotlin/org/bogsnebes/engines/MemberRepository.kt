@@ -123,6 +123,67 @@ class MemberRepository(databasePath: Path) : Closeable {
         }
     }
 
+    fun replacePingTags(chatId: Long, usernames: List<String>) {
+        val previousAutoCommit = connection.autoCommit
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement(
+                """
+                DELETE FROM ping_tags
+                WHERE chat_id = ?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setLong(1, chatId)
+                statement.executeUpdate()
+            }
+
+            connection.prepareStatement(
+                """
+                INSERT INTO ping_tags (
+                    chat_id,
+                    position,
+                    username
+                ) VALUES (?, ?, ?)
+                """.trimIndent()
+            ).use { statement ->
+                usernames.forEachIndexed { index, username ->
+                    statement.setLong(1, chatId)
+                    statement.setInt(2, index)
+                    statement.setString(3, username)
+                    statement.addBatch()
+                }
+                statement.executeBatch()
+            }
+
+            connection.commit()
+        } catch (error: Throwable) {
+            connection.rollback()
+            throw error
+        } finally {
+            connection.autoCommit = previousAutoCommit
+        }
+    }
+
+    fun listPingTags(chatId: Long): List<String> {
+        connection.prepareStatement(
+            """
+            SELECT username
+            FROM ping_tags
+            WHERE chat_id = ?
+            ORDER BY position ASC
+            """.trimIndent()
+        ).use { statement ->
+            statement.setLong(1, chatId)
+            statement.executeQuery().use { resultSet ->
+                val usernames = mutableListOf<String>()
+                while (resultSet.next()) {
+                    usernames += resultSet.getString("username")
+                }
+                return usernames
+            }
+        }
+    }
+
     override fun close() {
         connection.close()
     }
@@ -152,6 +213,22 @@ class MemberRepository(databasePath: Path) : Closeable {
                 """
                 CREATE INDEX IF NOT EXISTS idx_known_members_chat_seen
                 ON known_members(chat_id, last_seen_at DESC)
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ping_tags (
+                    chat_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    PRIMARY KEY(chat_id, username)
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ping_tags_chat_position
+                ON ping_tags(chat_id, position ASC)
                 """.trimIndent()
             )
         }

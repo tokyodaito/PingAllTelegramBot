@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class BotServiceTest {
     @Test
-    fun `handles group command and preserves thread id`() = runTest {
+    fun `handles group command from configured tags and preserves thread id`() = runTest {
         val dbPath = Files.createTempFile("bot-service", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
 
@@ -25,13 +25,7 @@ class BotServiceTest {
                 val gateway = FakeTelegramGateway()
                 val service = createService(repository, gateway, clock, backgroundScope)
 
-                repository.upsertSeenMember(
-                    chatId = -100L,
-                    user = TelegramUser(id = 2L, isBot = false, firstName = "Alice"),
-                    status = "member",
-                    seenAt = Instant.parse("2026-03-14T11:00:00Z"),
-                    source = "message",
-                )
+                repository.replacePingTags(-100L, listOf("alice", "bob"))
 
                 service.handle(
                     TelegramUpdate(
@@ -50,8 +44,8 @@ class BotServiceTest {
                 assertEquals(1, gateway.sentMessages.size)
                 assertEquals(42L, gateway.sentMessages.single().messageThreadId)
                 assertTrue(gateway.sentMessages.single().text.contains("Подъем"))
-                assertTrue(gateway.sentMessages.single().text.contains("tg://user?id=1"))
-                assertTrue(gateway.sentMessages.single().text.contains("tg://user?id=2"))
+                assertTrue(gateway.sentMessages.single().text.contains("@alice"))
+                assertTrue(gateway.sentMessages.single().text.contains("@bob"))
                 assertTrue(gateway.editedMessages.isEmpty())
                 assertTrue(gateway.deletedMessages.isEmpty())
             }
@@ -95,6 +89,39 @@ class BotServiceTest {
     }
 
     @Test
+    fun `returns explicit error when tags are not configured`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-empty", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway()
+                val service = createService(repository, gateway, clock, backgroundScope)
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 3L,
+                        message = TelegramMessage(
+                            messageId = 8L,
+                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
+                            chat = TelegramChat(id = -100L, type = "supergroup"),
+                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
+                            text = "/all",
+                        ),
+                    ),
+                )
+
+                assertEquals(
+                    "Список тегов не настроен. Используйте /add @username...",
+                    gateway.sentMessages.single().text,
+                )
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
     fun `applies cooldown to repeated command and updates notice until expiry`() = runTest {
         val dbPath = Files.createTempFile("bot-service-cooldown", ".db")
         val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
@@ -104,13 +131,7 @@ class BotServiceTest {
                 val gateway = FakeTelegramGateway()
                 val service = createService(repository, gateway, clock, backgroundScope)
 
-                repository.upsertSeenMember(
-                    chatId = -100L,
-                    user = TelegramUser(id = 2L, isBot = false, firstName = "Alice"),
-                    status = "member",
-                    seenAt = Instant.parse("2026-03-14T11:00:00Z"),
-                    source = "message",
-                )
+                repository.replacePingTags(-100L, listOf("alice"))
 
                 val update = TelegramUpdate(
                     updateId = 3L,
@@ -157,13 +178,7 @@ class BotServiceTest {
                 val gateway = FakeTelegramGateway()
                 val service = createService(repository, gateway, clock, backgroundScope)
 
-                repository.upsertSeenMember(
-                    chatId = -100L,
-                    user = TelegramUser(id = 2L, isBot = false, firstName = "Alice"),
-                    status = "member",
-                    seenAt = Instant.parse("2026-03-14T11:00:00Z"),
-                    source = "message",
-                )
+                repository.replacePingTags(-100L, listOf("alice"))
 
                 val update = TelegramUpdate(
                     updateId = 3L,
@@ -194,6 +209,112 @@ class BotServiceTest {
                 assertTrue(gateway.sentMessages.last().text.contains("кулдауне"))
                 assertEquals(listOf(9L, 2L, 10L), gateway.deletedMessages.map { it.messageId })
                 assertEquals(3L, gateway.sentMessages.last().messageId)
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `allows admin to replace ping tags`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-add", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                repository.replacePingTags(-100L, listOf("old"))
+                val gateway = FakeTelegramGateway().apply {
+                    adminUsers += -100L to 1L
+                }
+                val service = createService(repository, gateway, clock, backgroundScope)
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 6L,
+                        message = TelegramMessage(
+                            messageId = 11L,
+                            messageThreadId = 42L,
+                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
+                            chat = TelegramChat(id = -100L, type = "supergroup"),
+                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
+                            text = "/add @Alice @bob @ALICE",
+                        ),
+                    ),
+                )
+
+                assertEquals(listOf("alice", "bob"), repository.listPingTags(-100L))
+                assertEquals("Список тегов обновлён: @alice @bob", gateway.sentMessages.single().text)
+                assertEquals(42L, gateway.sentMessages.single().messageThreadId)
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `rejects add command from non admin`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-add-denied", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway()
+                val service = createService(repository, gateway, clock, backgroundScope)
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 7L,
+                        message = TelegramMessage(
+                            messageId = 12L,
+                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
+                            chat = TelegramChat(id = -100L, type = "supergroup"),
+                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
+                            text = "/add @alice",
+                        ),
+                    ),
+                )
+
+                assertEquals(
+                    "Команда /add доступна только администраторам чата.",
+                    gateway.sentMessages.single().text,
+                )
+                assertTrue(repository.listPingTags(-100L).isEmpty())
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `returns add usage for invalid add command from admin`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-add-invalid", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                val gateway = FakeTelegramGateway().apply {
+                    adminUsers += -100L to 1L
+                }
+                val service = createService(repository, gateway, clock, backgroundScope)
+
+                service.handle(
+                    TelegramUpdate(
+                        updateId = 8L,
+                        message = TelegramMessage(
+                            messageId = 13L,
+                            date = Instant.parse("2026-03-14T12:00:00Z").epochSecond,
+                            chat = TelegramChat(id = -100L, type = "supergroup"),
+                            from = TelegramUser(id = 1L, isBot = false, firstName = "Bob"),
+                            text = "/add @alice bob",
+                        ),
+                    ),
+                )
+
+                assertEquals(
+                    "Использование: /add @username1 @username2",
+                    gateway.sentMessages.single().text,
+                )
+                assertTrue(repository.listPingTags(-100L).isEmpty())
             }
         } finally {
             dbPath.deleteIfExists()

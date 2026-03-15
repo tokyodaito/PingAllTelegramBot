@@ -56,4 +56,22 @@ class MemberRepositoryTest {
             assertTrue(dbPath.deleteIfExists())
         }
     }
+
+    @Test
+    fun `replaces ping tags per chat preserving order`() {
+        val dbPath = Files.createTempFile("members-tags", ".db")
+
+        try {
+            MemberRepository(dbPath).use { repository ->
+                repository.replacePingTags(10L, listOf("alice", "bob"))
+                repository.replacePingTags(20L, listOf("other"))
+                repository.replacePingTags(10L, listOf("charlie", "alice"))
+
+                assertEquals(listOf("charlie", "alice"), repository.listPingTags(10L))
+                assertEquals(listOf("other"), repository.listPingTags(20L))
+            }
+        } finally {
+            assertTrue(dbPath.deleteIfExists())
+        }
+    }
 }

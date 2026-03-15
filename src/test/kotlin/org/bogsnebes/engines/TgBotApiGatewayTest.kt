@@ -1,6 +1,7 @@
 package org.bogsnebes.engines
 
 import dev.inmo.tgbotapi.requests.DeleteMessage
+import dev.inmo.tgbotapi.requests.chat.members.GetChatMember
 import dev.inmo.tgbotapi.requests.edit.text.EditChatMessageText
 import dev.inmo.tgbotapi.requests.send.SendTextMessage
 import dev.inmo.tgbotapi.types.IdChatIdentifier
@@ -87,6 +88,53 @@ class TgBotApiGatewayTest {
 
         assertEquals(-200L, chatId.chatId.long)
         assertEquals(99L, request.messageId.long)
+    }
+
+    @Test
+    fun `checks administrator status via get chat member`() = runBlocking {
+        val executor = RecordingRequestsExecutor(
+            responses = mapOf(
+                "getChatMember" to decodeChatMember(
+                    """
+                    {
+                      "status": "administrator",
+                      "user": {
+                        "id": 10,
+                        "is_bot": false,
+                        "first_name": "Owner",
+                        "username": "owner"
+                      },
+                      "can_be_edited": true,
+                      "is_anonymous": false,
+                      "can_manage_chat": true,
+                      "can_delete_messages": true,
+                      "can_manage_video_chats": true,
+                      "can_restrict_members": true,
+                      "can_promote_members": true,
+                      "can_change_info": true,
+                      "can_invite_users": true,
+                      "can_post_stories": true,
+                      "can_edit_stories": true,
+                      "can_delete_stories": true
+                    }
+                    """,
+                ),
+            ),
+        )
+        val gateway = TgBotApiGateway(executor)
+
+        val isAdmin = gateway.isChatAdmin(
+            chatId = -200L,
+            userId = 10L,
+        )
+
+        val request = assertIs<GetChatMember>(executor.requests.single())
+        val chatId = assertIs<IdChatIdentifier>(request.chatId)
+        val userId = assertIs<IdChatIdentifier>(request.userId)
+
+        assertEquals(-200L, chatId.chatId.long)
+        assertEquals(10L, userId.chatId.long)
+        assertEquals(true, isAdmin)
     }
 
     private fun sampleSentTextMessage(): ContentMessage<TextContent> {
