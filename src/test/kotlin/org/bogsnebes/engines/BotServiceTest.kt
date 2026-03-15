@@ -250,32 +250,103 @@ class BotServiceTest {
 
         try {
             PingTargetRepository(dbPath).use { repository ->
-                val gateway = FakeTelegramGateway()
-                val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway()
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
 
-                repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
 
-                val update = allCommandUpdate()
-                service.handle(update)
-                service.handle(update.copy(updateId = 4L))
+                    val update = allCommandUpdate()
+                    service.handle(update)
+                    val firstSessionId = sessionRepository.findActiveSession(-100L)?.id
+                    service.handle(update.copy(updateId = 4L))
 
-                assertEquals(2, gateway.sentMessages.size)
-                assertTrue(gateway.sentMessages.first().inlineKeyboard != null)
-                assertEquals(
-                    "Команда /all сейчас на кулдауне. Попробуйте снова через 10м 0с.",
-                    gateway.sentMessages.last().text,
-                )
-                assertEquals(listOf(8L), gateway.deletedMessages.map(DeletedMessage::messageId))
+                    assertEquals(2, gateway.sentMessages.size)
+                    assertTrue(gateway.sentMessages.first().inlineKeyboard != null)
+                    assertEquals(
+                        "Команда /all сейчас на кулдауне. Попробуйте снова через 10м 0с.",
+                        gateway.sentMessages.last().text,
+                    )
+                    assertEquals(firstSessionId, sessionRepository.findActiveSession(-100L)?.id)
+                    assertTrue(gateway.removedInlineKeyboards.isEmpty())
+                    assertEquals(listOf(8L), gateway.deletedMessages.map(DeletedMessage::messageId))
 
-                advanceTimeBy(10_000L)
-                runCurrent()
+                    advanceTimeBy(10_000L)
+                    runCurrent()
 
-                assertEquals(1, gateway.editedMessages.size)
-                assertEquals(2L, gateway.editedMessages.single().messageId)
-                assertEquals(
-                    "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 50с.",
-                    gateway.editedMessages.single().text,
-                )
+                    assertEquals(1, gateway.editedMessages.size)
+                    assertEquals(2L, gateway.editedMessages.single().messageId)
+                    assertEquals(
+                        "Команда /all сейчас на кулдауне. Попробуйте снова через 9м 50с.",
+                        gateway.editedMessages.single().text,
+                    )
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `keeps previous poll active until cooldown fully expires`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-cooldown-edge", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val gateway = FakeTelegramGateway()
+                    val service = createService(dbPath, repository, gateway, clock, backgroundScope)
+
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+
+                    service.handle(allCommandUpdate())
+                    val firstSessionId = sessionRepository.findActiveSession(-100L)?.id
+
+                    advanceTimeBy(Duration.ofMinutes(10).minusSeconds(1).toMillis())
+                    service.handle(allCommandUpdate(updateId = 2L, messageId = 9L))
+
+                    assertEquals(firstSessionId, sessionRepository.findActiveSession(-100L)?.id)
+                    assertTrue(gateway.removedInlineKeyboards.isEmpty())
+                    assertEquals(2, gateway.sentMessages.size)
+                    assertTrue(gateway.sentMessages.first().inlineKeyboard != null)
+                    assertEquals(null, gateway.sentMessages.last().inlineKeyboard)
+                    assertTrue(gateway.sentMessages.last().text.contains("Команда /all сейчас на кулдауне"))
+                }
+            }
+        } finally {
+            dbPath.deleteIfExists()
+        }
+    }
+
+    @Test
+    fun `blocks repeated command from replacing active poll after tracker state loss`() = runTest {
+        val dbPath = Files.createTempFile("bot-service-cooldown-reload", ".db")
+        val clock = SchedulerClock(testScheduler, Instant.parse("2026-03-14T12:00:00Z"))
+
+        try {
+            PingTargetRepository(dbPath).use { repository ->
+                AllPingSessionRepository(dbPath).use { sessionRepository ->
+                    val firstGateway = FakeTelegramGateway()
+                    val firstService = createService(dbPath, repository, firstGateway, clock, backgroundScope)
+
+                    repository.replaceTargets(-100L, listOf(PingTagTarget.forUsername("alice")))
+
+                    firstService.handle(allCommandUpdate())
+                    val firstSessionId = sessionRepository.findActiveSession(-100L)?.id
+
+                    advanceTimeBy(Duration.ofMinutes(5).toMillis())
+
+                    val secondGateway = FakeTelegramGateway()
+                    val secondService = createService(dbPath, repository, secondGateway, clock, backgroundScope)
+                    secondService.handle(allCommandUpdate(updateId = 2L, messageId = 9L))
+
+                    assertEquals(firstSessionId, sessionRepository.findActiveSession(-100L)?.id)
+                    assertTrue(secondGateway.removedInlineKeyboards.isEmpty())
+                    assertEquals(1, secondGateway.sentMessages.size)
+                    assertEquals(null, secondGateway.sentMessages.single().inlineKeyboard)
+                    assertTrue(secondGateway.sentMessages.single().text.contains("Команда /all сейчас на кулдауне"))
+                }
             }
         } finally {
             dbPath.deleteIfExists()

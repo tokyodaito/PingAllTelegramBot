@@ -68,16 +68,26 @@ class BotService(
 
         val now = Instant.now(clock)
         val previousActiveSession = allPingSessionRepository.findActiveSession(message.chat.id)
-        val cooldownRemaining = cooldownTracker.remainingOrReserve(message.chat.id, now)
+        val activeSessionCooldownRemaining = previousActiveSession
+            ?.let { cooldownTracker.remainingSince(it.createdAt, now) }
+        val trackedCooldownRemaining = cooldownTracker.remaining(message.chat.id, now)
+        val cooldownRemaining = listOfNotNull(activeSessionCooldownRemaining, trackedCooldownRemaining).maxOrNull()
         if (cooldownRemaining != null) {
+            val availableAt = cooldownTracker.reserveUntil(message.chat.id, now.plus(cooldownRemaining))
+            logger.info(
+                "Rejected /all for chat ${message.chat.id}: cooldown active for ${cooldownRemaining.seconds}s" +
+                    ", activeSessionId=${previousActiveSession?.id}, availableAt=$availableAt"
+            )
             cooldownNoticeManager.showCooldownNotice(
                 chatId = message.chat.id,
                 messageThreadId = message.messageThreadId,
                 commandMessageId = message.messageId,
-                availableAt = now.plus(cooldownRemaining),
+                availableAt = availableAt,
             )
             return
         }
+
+        cooldownTracker.reserve(message.chat.id, now)
 
         try {
             publishAllSession(
